@@ -353,9 +353,23 @@ void update_ch_cell(int ch, ch_state_t state, float vx, float vy)
 // ============================================================
 
 static lv_timer_t *timer_dummy = NULL;
+static lv_timer_t *timer_clock = NULL;
 static uint32_t    dummy_tick  = 0;
 static int32_t     ok_count    = 0;
 static int32_t     ng_count    = 0;
+
+// 1秒ごとに status_bar の時刻を更新
+static void clock_timer_cb(lv_timer_t *timer)
+{
+    LV_UNUSED(timer);
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    char buf[24];
+    lv_snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",
+                st.wYear, st.wMonth, st.wDay,
+                st.wHour, st.wMinute, st.wSecond);
+    lv_label_set_text(lbl_datetime, buf);
+}
 
 // 800ms ごとに呼ばれる。楕円軌道上のダミー電圧を全16Chに書き込む。
 static void dummy_timer_cb(lv_timer_t *timer)
@@ -1057,6 +1071,10 @@ static void create_scr_main(void)
     lv_obj_set_style_text_font(lbl_latest_ng, &lv_font_montserrat_10, 0);
 
     lv_screen_load(scr_main);
+
+    // 時計タイマー: 即時更新 + 1秒周期
+    clock_timer_cb(NULL);
+    timer_clock = lv_timer_create(clock_timer_cb, 1000, NULL);
 }
 
 // ============================================================
