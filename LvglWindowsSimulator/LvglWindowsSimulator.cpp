@@ -34,6 +34,10 @@ typedef enum { CH_INACTIVE, CH_OK, CH_NG } ch_state_t;
 
 // 画面
 static lv_obj_t *scr_main;
+static lv_obj_t *scr_settings_home;
+
+// scr_settings_home タイル
+static lv_obj_t *settings_tile[5];
 
 // header_bar (全画面共通コンポーネント)
 static lv_obj_t *header_bar;
@@ -88,6 +92,8 @@ static uint8_t pie_buf[100 * 100 * 4];
 static void btn_start_cb(lv_event_t *e);
 static void btn_stop_cb(lv_event_t *e);
 static void btn_counter_reset_cb(lv_event_t *e);
+static void btn_gear_cb(lv_event_t *e);
+static void btn_back_settings_cb(lv_event_t *e);
 
 // ---- ヘルパー: スクロール/ボーダー/パッドを除去 ----
 static void bare_obj(lv_obj_t *obj)
@@ -217,8 +223,9 @@ static void create_header_bar(lv_obj_t *parent)
     lv_obj_center(lbl_gear);
 
     // イベントコールバック登録
-    lv_obj_add_event_cb(btn_start, btn_start_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_add_event_cb(btn_stop,  btn_stop_cb,  LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(btn_start, btn_start_cb,  LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(btn_stop,  btn_stop_cb,   LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(btn_gear,  btn_gear_cb,   LV_EVENT_CLICKED, NULL);
 }
 
 // ---- ch_cell 単体生成 ----
@@ -422,6 +429,168 @@ static void btn_counter_reset_cb(lv_event_t *e)
     ng_count = 0;
     lv_label_set_text(lbl_ok_val, "0");
     lv_label_set_text(lbl_ng_val, "0");
+}
+
+// ============================================================
+//  scr_settings_home  画面遷移コールバック
+// ============================================================
+
+// 歯車ボタン → 設定ホームへ (左スライド)
+static void btn_gear_cb(lv_event_t *e)
+{
+    LV_UNUSED(e);
+    if (timer_dummy != NULL) {
+        lv_timer_delete(timer_dummy);
+        timer_dummy = NULL;
+    }
+    lv_screen_load_anim(scr_settings_home, LV_SCR_LOAD_ANIM_MOVE_LEFT, 250, 0, false);
+}
+
+// 設定ホームの戻るボタン → メイン画面へ (右スライド)
+static void btn_back_settings_cb(lv_event_t *e)
+{
+    LV_UNUSED(e);
+    lv_screen_load_anim(scr_main, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 250, 0, false);
+}
+
+// ============================================================
+//  scr_settings_home  生成
+// ============================================================
+static void create_scr_settings_home(void)
+{
+    scr_settings_home = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(scr_settings_home, COL_BG, 0);
+    lv_obj_set_style_bg_opa(scr_settings_home, LV_OPA_COVER, 0);
+    bare_obj(scr_settings_home);
+
+    // ── header_bar ───────────────────────────────────────────
+    lv_obj_t *hdr = lv_obj_create(scr_settings_home);
+    lv_obj_set_size(hdr, 800, 44);
+    lv_obj_set_pos(hdr, 0, 0);
+    lv_obj_set_style_bg_color(hdr, COL_BG, 0);
+    lv_obj_set_style_bg_opa(hdr, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(hdr, 0, 0);
+    bare_obj(hdr);
+
+    // btn_back: 表示 → scr_main へ戻る
+    lv_obj_t *back_btn = lv_btn_create(hdr);
+    lv_obj_set_size(back_btn, 36, 28);
+    lv_obj_set_pos(back_btn, 4, 8);
+    lv_obj_set_style_bg_color(back_btn, COL_BTN_GRAY, 0);
+    lv_obj_t *back_icon = lv_label_create(back_btn);
+    lv_label_set_text(back_icon, LV_SYMBOL_LEFT);
+    lv_obj_center(back_icon);
+    lv_obj_add_event_cb(back_btn, btn_back_settings_cb, LV_EVENT_CLICKED, NULL);
+
+    // lbl_title
+    lv_obj_t *hdr_title = lv_label_create(hdr);
+    lv_label_set_text(hdr_title, "Settings");
+    lv_obj_set_pos(hdr_title, 48, 14);
+    lv_obj_set_style_text_color(hdr_title, COL_WHITE, 0);
+    lv_obj_set_style_text_font(hdr_title, &lv_font_montserrat_16, 0);
+
+    // mem_selector (共通外観)
+    lv_obj_t *mem_sel = lv_obj_create(hdr);
+    lv_obj_set_size(mem_sel, 168, 30);
+    lv_obj_set_pos(mem_sel, 316, 7);
+    lv_obj_set_style_bg_color(mem_sel, COL_SURFACE, 0);
+    lv_obj_set_style_bg_opa(mem_sel, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(mem_sel, 6, 0);
+    bare_obj(mem_sel);
+
+    lv_obj_t *mp = lv_btn_create(mem_sel);
+    lv_obj_set_size(mp, 24, 22);
+    lv_obj_set_pos(mp, 2, 4);
+    lv_obj_set_style_bg_color(mp, COL_BTN_GRAY, 0);
+    lv_label_set_text(lv_label_create(mp), LV_SYMBOL_LEFT);
+    lv_obj_center(lv_obj_get_child(mp, 0));
+
+    lv_obj_t *mno = lv_label_create(mem_sel);
+    lv_label_set_text(mno, "001");
+    lv_obj_set_pos(mno, 30, 7);
+    lv_obj_set_style_text_color(mno, COL_BLUE, 0);
+    lv_obj_set_style_text_font(mno, &lv_font_montserrat_16, 0);
+
+    lv_obj_t *mn = lv_btn_create(mem_sel);
+    lv_obj_set_size(mn, 24, 22);
+    lv_obj_set_pos(mn, 72, 4);
+    lv_obj_set_style_bg_color(mn, COL_BTN_GRAY, 0);
+    lv_label_set_text(lv_label_create(mn), LV_SYMBOL_RIGHT);
+    lv_obj_center(lv_obj_get_child(mn, 0));
+
+    lv_obj_t *mname = lv_label_create(mem_sel);
+    lv_label_set_text(mname, "M1: (unnamed)");
+    lv_obj_set_pos(mname, 100, 10);
+    lv_obj_set_style_text_color(mname, COL_MUTED, 0);
+    lv_obj_set_style_text_font(mname, &lv_font_montserrat_10, 0);
+
+    // ── タイルコンテナ ────────────────────────────────────────
+    // 5タイル × (w=140 h=240)  gap=12
+    // 合計幅: 5×140 + 4×12 = 748  → x開始: (800-748)/2 = 26
+    // y中央: 44 + (436-240)/2 = 142
+
+    static const char *tile_titles[] = {
+        "Meas. Conditions",
+        "Threshold",
+        "History",
+        "Correction",
+        "Detail Settings"
+    };
+    static const char *tile_subs[] = {
+        "Frequency / Gain",
+        "Ellipse params",
+        "Log & CSV export",
+        "Correction coeff.",
+        "Language / Clock / I/O"
+    };
+    static const char *tile_icons[] = {
+        LV_SYMBOL_AUDIO,
+        LV_SYMBOL_WARNING,
+        LV_SYMBOL_LIST,
+        LV_SYMBOL_EDIT,
+        LV_SYMBOL_SETTINGS
+    };
+
+    const int tile_w = 140, tile_h = 240, gap = 12;
+    const int x0 = (800 - (5 * tile_w + 4 * gap)) / 2;  // = 26
+    const int y0 = 44 + (436 - tile_h) / 2;              // = 142
+
+    for (int i = 0; i < 5; i++) {
+        settings_tile[i] = lv_btn_create(scr_settings_home);
+        lv_obj_set_size(settings_tile[i], tile_w, tile_h);
+        lv_obj_set_pos(settings_tile[i], x0 + i * (tile_w + gap), y0);
+        lv_obj_set_style_bg_color(settings_tile[i], COL_SURFACE, 0);
+        lv_obj_set_style_bg_opa(settings_tile[i], LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(settings_tile[i], 8, 0);
+        lv_obj_set_style_border_width(settings_tile[i], 0, 0);
+        lv_obj_set_style_pad_all(settings_tile[i], 12, 0);
+        lv_obj_remove_flag(settings_tile[i], LV_OBJ_FLAG_SCROLLABLE);
+
+        // アイコン (LVGLシンボル)
+        lv_obj_t *icon = lv_label_create(settings_tile[i]);
+        lv_label_set_text(icon, tile_icons[i]);
+        lv_obj_set_style_text_font(icon, &lv_font_montserrat_24, 0);
+        lv_obj_set_style_text_color(icon, COL_BLUE, 0);
+        lv_obj_align(icon, LV_ALIGN_TOP_MID, 0, 16);
+
+        // タイトル
+        lv_obj_t *t_lbl = lv_label_create(settings_tile[i]);
+        lv_label_set_text(t_lbl, tile_titles[i]);
+        lv_obj_set_style_text_font(t_lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(t_lbl, COL_WHITE, 0);
+        lv_label_set_long_mode(t_lbl, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(t_lbl, tile_w - 24);
+        lv_obj_align(t_lbl, LV_ALIGN_CENTER, 0, 10);
+
+        // サブタイトル
+        lv_obj_t *sub = lv_label_create(settings_tile[i]);
+        lv_label_set_text(sub, tile_subs[i]);
+        lv_obj_set_style_text_font(sub, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_color(sub, COL_MUTED, 0);
+        lv_label_set_long_mode(sub, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(sub, tile_w - 24);
+        lv_obj_align(sub, LV_ALIGN_BOTTOM_MID, 0, -12);
+    }
 }
 
 // ---- scr_main 生成 ----
@@ -658,7 +827,8 @@ int main()
         return -1;
     }
 
-    create_scr_main();
+    create_scr_settings_home();   // scr_main より先に作成 (遷移先)
+    create_scr_main();            // 最後に load するので後で呼ぶ
 
     while (1)
     {
