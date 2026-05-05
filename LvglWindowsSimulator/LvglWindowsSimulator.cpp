@@ -95,6 +95,19 @@ static void btn_counter_reset_cb(lv_event_t *e);
 static void btn_gear_cb(lv_event_t *e);
 static void btn_back_settings_cb(lv_event_t *e);
 static void draw_pie_chart(int32_t ok, int32_t ng);
+static void init_trend_chart(void);
+
+// ---- トレンドチャート定数・グローバル ----
+#define TREND_CH_MAX  5
+
+static const uint32_t TREND_COLOR_HEX[TREND_CH_MAX] = {
+    0x22c55e,   // Ch1: 緑
+    0x38bdf8,   // Ch2: 水色
+    0xfbbf24,   // Ch3: 黄
+    0xf472b6,   // Ch4: ピンク
+    0xa78bfa,   // Ch5: 紫
+};
+static lv_chart_series_t *trend_series[TREND_CH_MAX];
 
 // ---- ヘルパー: スクロール/ボーダー/パッドを除去 ----
 static void bare_obj(lv_obj_t *obj)
@@ -350,6 +363,8 @@ static void dummy_timer_cb(lv_timer_t *timer)
     const float b = 0.55f;  // Y半径 [V]
     const float k = 1.2f;   // 閾値拡大係数
 
+    float dist_vals[16] = {0};  // トレンドチャート用に保持
+
     for (int ch = 0; ch < 16; ch++) {
         // Chごとに位相をずらして楕円軌道上を移動
         float phase = (float)dummy_tick * 0.18f
@@ -365,12 +380,19 @@ static void dummy_timer_cb(lv_timer_t *timer)
         float dx = vx / (a * k);
         float dy = vy / (b * k);
         float dist = sqrtf(dx * dx + dy * dy);
+        dist_vals[ch] = dist;
 
         ch_state_t state = (dist > 1.0f) ? CH_NG : CH_OK;
         update_ch_cell(ch, state, vx, vy);
 
         if (state == CH_OK) ok_count++;
         else                ng_count++;
+    }
+
+    // トレンドチャート更新 (Ch1〜Ch5 / 値は dist×100 の整数)
+    for (int i = 0; i < TREND_CH_MAX; i++) {
+        lv_chart_set_next_value(chart_trend, trend_series[i],
+                                (int32_t)(dist_vals[i] * 100.0f));
     }
 
     // OK/NG カウント更新
@@ -423,6 +445,10 @@ static void btn_stop_cb(lv_event_t *e)
     lv_label_set_text(lbl_ng_val, "0");
     lv_label_set_text(lbl_judge_badge, "--");
     lv_obj_set_style_text_color(lbl_judge_badge, COL_MUTED, 0);
+    for (int i = 0; i < TREND_CH_MAX; i++) {
+        lv_chart_set_all_value(chart_trend, trend_series[i], LV_CHART_POINT_NONE);
+    }
+    lv_chart_refresh(chart_trend);
     draw_pie_chart(0, 0);
 }
 
@@ -434,6 +460,10 @@ static void btn_counter_reset_cb(lv_event_t *e)
     ng_count = 0;
     lv_label_set_text(lbl_ok_val, "0");
     lv_label_set_text(lbl_ng_val, "0");
+    for (int i = 0; i < TREND_CH_MAX; i++) {
+        lv_chart_set_all_value(chart_trend, trend_series[i], LV_CHART_POINT_NONE);
+    }
+    lv_chart_refresh(chart_trend);
     draw_pie_chart(0, 0);
 }
 
@@ -543,6 +573,24 @@ static void draw_pie_chart(int32_t ok, int32_t ng)
     lv_draw_label(&layer, &lbl, &txt_area);
 
     lv_canvas_finish_layer(pie_area, &layer);
+}
+
+// ============================================================
+//  chart_trend  初期化
+// ============================================================
+static void init_trend_chart(void)
+{
+    lv_chart_set_range(chart_trend, LV_CHART_AXIS_PRIMARY_Y, 0, 200);
+    lv_chart_set_div_line_count(chart_trend, 4, 0);
+    // ドットを非表示
+    lv_obj_set_style_size(chart_trend, 0, 0, LV_PART_INDICATOR);
+
+    for (int i = 0; i < TREND_CH_MAX; i++) {
+        trend_series[i] = lv_chart_add_series(chart_trend,
+                                               lv_color_hex(TREND_COLOR_HEX[i]),
+                                               LV_CHART_AXIS_PRIMARY_Y);
+        lv_chart_set_all_value(chart_trend, trend_series[i], LV_CHART_POINT_NONE);
+    }
 }
 
 // ============================================================
@@ -762,6 +810,7 @@ static void create_scr_main(void)
     lv_obj_set_style_bg_opa(chart_trend, LV_OPA_COVER, 0);
     lv_obj_set_style_border_color(chart_trend, COL_BTN_GRAY, 0);
     lv_obj_set_style_border_width(chart_trend, 1, 0);
+    init_trend_chart();
 
     // -- pie_area: lv_canvas 100x100  OK/NG円グラフ --
     // 実描画は lv_draw_arc を使って task_ui 側で行う
