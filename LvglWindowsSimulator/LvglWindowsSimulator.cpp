@@ -35,6 +35,11 @@ typedef enum { CH_INACTIVE, CH_OK, CH_NG } ch_state_t;
 // 画面
 static lv_obj_t *scr_main;
 static lv_obj_t *scr_settings_home;
+static lv_obj_t *scr_meas_cond;
+static lv_obj_t *scr_threshold;
+static lv_obj_t *scr_history;
+static lv_obj_t *scr_correction;
+static lv_obj_t *scr_detail;
 
 // scr_settings_home タイル
 static lv_obj_t *settings_tile[5];
@@ -94,6 +99,8 @@ static void btn_stop_cb(lv_event_t *e);
 static void btn_counter_reset_cb(lv_event_t *e);
 static void btn_gear_cb(lv_event_t *e);
 static void btn_back_settings_cb(lv_event_t *e);
+static void btn_back_to_settings_cb(lv_event_t *e);
+static void tile_open_cb(lv_event_t *e);
 static void draw_pie_chart(int32_t ok, int32_t ng);
 static void init_trend_chart(void);
 
@@ -616,6 +623,132 @@ static void btn_back_settings_cb(lv_event_t *e)
 }
 
 // ============================================================
+//  設定サブ画面  共通ヘルパー・コールバック
+// ============================================================
+
+// 設定サブ画面 → scr_settings_home へ戻る
+static void btn_back_to_settings_cb(lv_event_t *e)
+{
+    LV_UNUSED(e);
+    lv_screen_load_anim(scr_settings_home, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 250, 0, false);
+}
+
+// タイル tap → user_data に渡した画面へ左スライド遷移
+static void tile_open_cb(lv_event_t *e)
+{
+    lv_obj_t *dest = (lv_obj_t *)lv_event_get_user_data(e);
+    lv_screen_load_anim(dest, LV_SCR_LOAD_ANIM_MOVE_LEFT, 250, 0, false);
+}
+
+// 設定サブ画面の共通骨格を生成。戻り値 = コンテンツコンテナ (800×436, y=44)
+static lv_obj_t *make_settings_subscr(lv_obj_t **out_scr, const char *title)
+{
+    *out_scr = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(*out_scr, COL_BG, 0);
+    lv_obj_set_style_bg_opa(*out_scr, LV_OPA_COVER, 0);
+    bare_obj(*out_scr);
+
+    // ヘッダー
+    lv_obj_t *hdr = lv_obj_create(*out_scr);
+    lv_obj_set_size(hdr, 800, 44);
+    lv_obj_set_pos(hdr, 0, 0);
+    lv_obj_set_style_bg_color(hdr, COL_BG, 0);
+    lv_obj_set_style_bg_opa(hdr, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(hdr, 0, 0);
+    bare_obj(hdr);
+
+    lv_obj_t *back_btn = lv_btn_create(hdr);
+    lv_obj_set_size(back_btn, 36, 28);
+    lv_obj_set_pos(back_btn, 4, 8);
+    lv_obj_set_style_bg_color(back_btn, COL_BTN_GRAY, 0);
+    lv_obj_t *back_icon = lv_label_create(back_btn);
+    lv_label_set_text(back_icon, LV_SYMBOL_LEFT);
+    lv_obj_center(back_icon);
+    lv_obj_add_event_cb(back_btn, btn_back_to_settings_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *hdr_title = lv_label_create(hdr);
+    lv_label_set_text(hdr_title, title);
+    lv_obj_set_pos(hdr_title, 48, 14);
+    lv_obj_set_style_text_color(hdr_title, COL_WHITE, 0);
+    lv_obj_set_style_text_font(hdr_title, &lv_font_montserrat_16, 0);
+
+    // コンテンツエリア
+    lv_obj_t *content = lv_obj_create(*out_scr);
+    lv_obj_set_size(content, 800, 436);
+    lv_obj_set_pos(content, 0, 44);
+    lv_obj_set_style_bg_color(content, COL_BG, 0);
+    lv_obj_set_style_bg_opa(content, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(content, 0, 0);
+    bare_obj(content);
+
+    return content;
+}
+
+// ============================================================
+//  設定サブ画面  各スケルトン
+// ============================================================
+
+static void create_scr_meas_cond(void)
+{
+    lv_obj_t *c = make_settings_subscr(&scr_meas_cond, "Meas. Conditions");
+    lv_obj_t *ph = lv_label_create(c);
+    lv_label_set_text(ph, "Meas. Conditions\n(Frequency / Gain)");
+    lv_obj_set_style_text_color(ph, COL_MUTED, 0);
+    lv_obj_set_style_text_font(ph, &lv_font_montserrat_16, 0);
+    lv_label_set_long_mode(ph, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(ph, 400);
+    lv_obj_center(ph);
+}
+
+static void create_scr_threshold(void)
+{
+    lv_obj_t *c = make_settings_subscr(&scr_threshold, "Threshold");
+    lv_obj_t *ph = lv_label_create(c);
+    lv_label_set_text(ph, "Threshold\n(Ellipse params)");
+    lv_obj_set_style_text_color(ph, COL_MUTED, 0);
+    lv_obj_set_style_text_font(ph, &lv_font_montserrat_16, 0);
+    lv_label_set_long_mode(ph, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(ph, 400);
+    lv_obj_center(ph);
+}
+
+static void create_scr_history(void)
+{
+    lv_obj_t *c = make_settings_subscr(&scr_history, "History");
+    lv_obj_t *ph = lv_label_create(c);
+    lv_label_set_text(ph, "History\n(Log & CSV export)");
+    lv_obj_set_style_text_color(ph, COL_MUTED, 0);
+    lv_obj_set_style_text_font(ph, &lv_font_montserrat_16, 0);
+    lv_label_set_long_mode(ph, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(ph, 400);
+    lv_obj_center(ph);
+}
+
+static void create_scr_correction(void)
+{
+    lv_obj_t *c = make_settings_subscr(&scr_correction, "Correction");
+    lv_obj_t *ph = lv_label_create(c);
+    lv_label_set_text(ph, "Correction\n(Correction coeff.)");
+    lv_obj_set_style_text_color(ph, COL_MUTED, 0);
+    lv_obj_set_style_text_font(ph, &lv_font_montserrat_16, 0);
+    lv_label_set_long_mode(ph, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(ph, 400);
+    lv_obj_center(ph);
+}
+
+static void create_scr_detail(void)
+{
+    lv_obj_t *c = make_settings_subscr(&scr_detail, "Detail Settings");
+    lv_obj_t *ph = lv_label_create(c);
+    lv_label_set_text(ph, "Detail Settings\n(Language / Clock / I/O)");
+    lv_obj_set_style_text_color(ph, COL_MUTED, 0);
+    lv_obj_set_style_text_font(ph, &lv_font_montserrat_16, 0);
+    lv_label_set_long_mode(ph, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(ph, 400);
+    lv_obj_center(ph);
+}
+
+// ============================================================
 //  scr_settings_home  生成
 // ============================================================
 static void create_scr_settings_home(void)
@@ -752,6 +885,16 @@ static void create_scr_settings_home(void)
         lv_label_set_long_mode(sub, LV_LABEL_LONG_WRAP);
         lv_obj_set_width(sub, tile_w - 24);
         lv_obj_align(sub, LV_ALIGN_BOTTOM_MID, 0, -12);
+    }
+
+    // タイルタップ → 各設定サブ画面へ遷移
+    // ※ サブ画面は create_scr_settings_home より先に生成しておく必要がある
+    lv_obj_t *sub_screens[5] = {
+        scr_meas_cond, scr_threshold, scr_history, scr_correction, scr_detail
+    };
+    for (int i = 0; i < 5; i++) {
+        lv_obj_add_event_cb(settings_tile[i], tile_open_cb,
+                            LV_EVENT_CLICKED, sub_screens[i]);
     }
 }
 
@@ -990,7 +1133,12 @@ int main()
         return -1;
     }
 
-    create_scr_settings_home();   // scr_main より先に作成 (遷移先)
+    create_scr_meas_cond();        // 設定サブ画面は settings_home より先に作成
+    create_scr_threshold();
+    create_scr_history();
+    create_scr_correction();
+    create_scr_detail();
+    create_scr_settings_home();   // タイルコールバックがサブ画面ポインタを参照するため後
     create_scr_main();            // 最後に load するので後で呼ぶ
 
     while (1)
