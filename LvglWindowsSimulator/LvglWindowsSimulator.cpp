@@ -94,6 +94,7 @@ static void btn_stop_cb(lv_event_t *e);
 static void btn_counter_reset_cb(lv_event_t *e);
 static void btn_gear_cb(lv_event_t *e);
 static void btn_back_settings_cb(lv_event_t *e);
+static void draw_pie_chart(int32_t ok, int32_t ng);
 
 // ---- ヘルパー: スクロール/ボーダー/パッドを除去 ----
 static void bare_obj(lv_obj_t *obj)
@@ -391,6 +392,9 @@ static void dummy_timer_cb(lv_timer_t *timer)
         lv_label_set_text(lbl_judge_badge, "ALL OK");
         lv_obj_set_style_text_color(lbl_judge_badge, COL_ACCENT_OK, 0);
     }
+
+    // 円グラフ更新
+    draw_pie_chart(ok_count, ng_count);
 }
 
 // START ボタン: タイマー開始
@@ -419,6 +423,7 @@ static void btn_stop_cb(lv_event_t *e)
     lv_label_set_text(lbl_ng_val, "0");
     lv_label_set_text(lbl_judge_badge, "--");
     lv_obj_set_style_text_color(lbl_judge_badge, COL_MUTED, 0);
+    draw_pie_chart(0, 0);
 }
 
 // カウンターリセットボタン: カウントのみクリア (タイマーは継続)
@@ -429,6 +434,115 @@ static void btn_counter_reset_cb(lv_event_t *e)
     ng_count = 0;
     lv_label_set_text(lbl_ok_val, "0");
     lv_label_set_text(lbl_ng_val, "0");
+    draw_pie_chart(0, 0);
+}
+
+// ============================================================
+//  pie_area  ドーナツ円グラフ描画
+// ============================================================
+// ok / ng: 累積カウント。タイマーコールバックおよびリセット時に呼ぶ。
+// ※ lv_canvas_fill_bg() は初期化時に呼ばず、ここで毎回背景を上書きする。
+static void draw_pie_chart(int32_t ok, int32_t ng)
+{
+    lv_layer_t layer;
+    lv_canvas_init_layer(pie_area, &layer);
+
+    // ─── 1. 背景クリア ───────────────────────────────────────
+    lv_draw_rect_dsc_t bg;
+    lv_draw_rect_dsc_init(&bg);
+    bg.bg_color   = COL_SURFACE;
+    bg.bg_opa     = LV_OPA_COVER;
+    bg.radius     = 0;
+    bg.border_width = 0;
+    lv_area_t full = {0, 0, 99, 99};
+    lv_draw_rect(&layer, &bg, &full);
+
+    // ─── 2. ドーナツアーク ────────────────────────────────────
+    const int32_t  cx      = 50;
+    const int32_t  cy      = 50;
+    const uint16_t r_outer = 44;
+    const int32_t  ring_w  = 16;
+    const int32_t  inner_r = r_outer - ring_w;   // = 28
+
+    lv_draw_arc_dsc_t arc;
+    lv_draw_arc_dsc_init(&arc);
+    arc.center.x = cx;
+    arc.center.y = cy;
+    arc.radius   = r_outer;
+    arc.width    = ring_w;
+    arc.rounded  = 0;
+    arc.opa      = LV_OPA_COVER;
+
+    int32_t total = ok + ng;
+
+    if (total == 0) {
+        // 未計測: グレー全円
+        arc.color       = COL_ACCENT_IDLE;
+        arc.start_angle = 0;
+        arc.end_angle   = 360;
+        lv_draw_arc(&layer, &arc);
+    } else if (ng == 0) {
+        // 全OK: 緑全円
+        arc.color       = COL_ACCENT_OK;
+        arc.start_angle = 0;
+        arc.end_angle   = 360;
+        lv_draw_arc(&layer, &arc);
+    } else if (ok == 0) {
+        // 全NG: 赤全円
+        arc.color       = COL_ACCENT_NG;
+        arc.start_angle = 0;
+        arc.end_angle   = 360;
+        lv_draw_arc(&layer, &arc);
+    } else {
+        // NG: 全円を赤で塗る → OK分を緑で上書き
+        arc.color       = COL_ACCENT_NG;
+        arc.start_angle = 0;
+        arc.end_angle   = 360;
+        lv_draw_arc(&layer, &arc);
+
+        // OK: 12時(270°)から時計回りに ok_angle 分
+        int32_t ok_angle = (int32_t)((float)ok / (float)total * 360.0f + 0.5f);
+        arc.color       = COL_ACCENT_OK;
+        arc.start_angle = 270;
+        arc.end_angle   = (lv_value_precise_t)((270 + ok_angle) % 360);
+        lv_draw_arc(&layer, &arc);
+    }
+
+    // ─── 3. 中心円でドーナツ化 ───────────────────────────────
+    lv_draw_rect_dsc_t hole;
+    lv_draw_rect_dsc_init(&hole);
+    hole.bg_color    = COL_SURFACE;
+    hole.bg_opa      = LV_OPA_COVER;
+    hole.radius      = LV_RADIUS_CIRCLE;
+    hole.border_width = 0;
+    lv_area_t hole_area = {
+        (lv_coord_t)(cx - inner_r), (lv_coord_t)(cy - inner_r),
+        (lv_coord_t)(cx + inner_r), (lv_coord_t)(cy + inner_r)
+    };
+    lv_draw_rect(&layer, &hole, &hole_area);
+
+    // ─── 4. 中央テキスト (OK%) ───────────────────────────────
+    lv_draw_label_dsc_t lbl;
+    lv_draw_label_dsc_init(&lbl);
+    lbl.font   = &lv_font_montserrat_12;
+    lbl.color  = COL_WHITE;
+    lbl.opa    = LV_OPA_COVER;
+    lbl.align  = LV_TEXT_ALIGN_CENTER;
+
+    char pct[8];
+    if (total > 0) {
+        lv_snprintf(pct, sizeof(pct), "%d%%", (int)(ok * 100 / total));
+    } else {
+        lv_snprintf(pct, sizeof(pct), "--");
+    }
+    lbl.text = pct;
+    lv_area_t txt_area = {
+        (lv_coord_t)(cx - 22), (lv_coord_t)(cy - 8),
+        (lv_coord_t)(cx + 22), (lv_coord_t)(cy + 8)
+    };
+    lv_draw_label(&layer, &lbl, &txt_area);
+
+    lv_canvas_finish_layer(pie_area, &layer);
 }
 
 // ============================================================
