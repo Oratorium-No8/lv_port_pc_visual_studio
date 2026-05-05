@@ -81,8 +81,13 @@ static lv_obj_t *status_bar;
 static lv_obj_t *lbl_datetime;
 static lv_obj_t *lbl_latest_ng;
 
-// pie_area バッファ (100x100)
-static lv_color_t pie_buf[100 * 100];
+// pie_area バッファ (100x100 / ARGB8888 想定で 4byte/pixel)
+static uint8_t pie_buf[100 * 100 * 4];
+
+// ---- 前方宣言 ----
+static void btn_start_cb(lv_event_t *e);
+static void btn_stop_cb(lv_event_t *e);
+static void btn_counter_reset_cb(lv_event_t *e);
 
 // ---- ヘルパー: スクロール/ボーダー/パッドを除去 ----
 static void bare_obj(lv_obj_t *obj)
@@ -481,7 +486,6 @@ static void create_scr_main(void)
     lv_obj_set_size(pie_area, 100, 100);
     lv_obj_set_pos(pie_area, 60, 118);
     lv_canvas_set_buffer(pie_area, pie_buf, 100, 100, LV_COLOR_FORMAT_NATIVE);
-    lv_canvas_fill_bg(pie_area, COL_SURFACE, LV_OPA_COVER);
 
     // -- count_ok カード: 緑背景 100x56 --
     count_ok = lv_obj_create(right_panel);
