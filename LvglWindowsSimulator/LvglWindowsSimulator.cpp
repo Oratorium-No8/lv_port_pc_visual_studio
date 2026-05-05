@@ -1,4 +1,5 @@
 #include <Windows.h>
+#include <math.h>
 
 #include <LvglWindowsIconResource.h>
 
@@ -209,6 +210,10 @@ static void create_header_bar(lv_obj_t *parent)
     lv_obj_t *lbl_gear = lv_label_create(btn_gear);
     lv_label_set_text(lbl_gear, LV_SYMBOL_SETTINGS);
     lv_obj_center(lbl_gear);
+
+    // イベントコールバック登録
+    lv_obj_add_event_cb(btn_start, btn_start_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(btn_stop,  btn_stop_cb,  LV_EVENT_CLICKED, NULL);
 }
 
 // ---- ch_cell 単体生成 ----
@@ -308,6 +313,110 @@ void update_ch_cell(int ch, ch_state_t state, float vx, float vy)
     lv_label_set_text(lbl_voltage_x[ch], buf);
     lv_snprintf(buf, sizeof(buf), "Y %+.3f V", vy);
     lv_label_set_text(lbl_voltage_y[ch], buf);
+}
+
+// ============================================================
+//  ダミーデータタイマー  (動作確認用)
+// ============================================================
+
+static lv_timer_t *timer_dummy = NULL;
+static uint32_t    dummy_tick  = 0;
+static int32_t     ok_count    = 0;
+static int32_t     ng_count    = 0;
+
+// 800ms ごとに呼ばれる。楕円軌道上のダミー電圧を全16Chに書き込む。
+static void dummy_timer_cb(lv_timer_t *timer)
+{
+    LV_UNUSED(timer);
+    dummy_tick++;
+    ok_count = 0;
+    ng_count = 0;
+
+    // 楕円パラメータ (固定値)
+    const float a = 1.0f;   // X半径 [V]
+    const float b = 0.55f;  // Y半径 [V]
+    const float k = 1.2f;   // 閾値拡大係数
+
+    for (int ch = 0; ch < 16; ch++) {
+        // Chごとに位相をずらして楕円軌道上を移動
+        float phase = (float)dummy_tick * 0.18f
+                    + (float)ch * (2.0f * 3.14159265f / 16.0f);
+        float vx = a * cosf(phase);
+        float vy = b * sinf(phase);
+
+        // 擬似ノイズ (tick と ch の組み合わせで決定論的に生成)
+        vx += 0.07f * sinf((float)(dummy_tick * 7  + ch * 13));
+        vy += 0.07f * cosf((float)(dummy_tick * 11 + ch *  5));
+
+        // 楕円距離 d: d > 1.0 なら閾値楕円の外 → NG
+        float dx = vx / (a * k);
+        float dy = vy / (b * k);
+        float dist = sqrtf(dx * dx + dy * dy);
+
+        ch_state_t state = (dist > 1.0f) ? CH_NG : CH_OK;
+        update_ch_cell(ch, state, vx, vy);
+
+        if (state == CH_OK) ok_count++;
+        else                ng_count++;
+    }
+
+    // OK/NG カウント更新
+    char buf[8];
+    lv_snprintf(buf, sizeof(buf), "%d", (int)ok_count);
+    lv_label_set_text(lbl_ok_val, buf);
+    lv_snprintf(buf, sizeof(buf), "%d", (int)ng_count);
+    lv_label_set_text(lbl_ng_val, buf);
+
+    // 楕円パラメータ表示 (Ch1 の固定値)
+    lv_label_set_text(lbl_ellipse_a, "a = 1.000 V");
+    lv_label_set_text(lbl_ellipse_b, "b = 0.550 V");
+
+    // 総合判定バッジ
+    if (ng_count > 0) {
+        lv_label_set_text(lbl_judge_badge, "NG");
+        lv_obj_set_style_text_color(lbl_judge_badge, COL_ACCENT_NG, 0);
+    } else {
+        lv_label_set_text(lbl_judge_badge, "ALL OK");
+        lv_obj_set_style_text_color(lbl_judge_badge, COL_ACCENT_OK, 0);
+    }
+}
+
+// START ボタン: タイマー開始
+static void btn_start_cb(lv_event_t *e)
+{
+    LV_UNUSED(e);
+    if (timer_dummy != NULL) return;  // 二重起動防止
+    ok_count   = 0;
+    ng_count   = 0;
+    dummy_tick = 0;
+    timer_dummy = lv_timer_create(dummy_timer_cb, 800, NULL);
+}
+
+// STOP ボタン: タイマー停止・全Ch を INACTIVE に戻す
+static void btn_stop_cb(lv_event_t *e)
+{
+    LV_UNUSED(e);
+    if (timer_dummy != NULL) {
+        lv_timer_delete(timer_dummy);
+        timer_dummy = NULL;
+    }
+    for (int ch = 0; ch < 16; ch++) {
+        update_ch_cell(ch, CH_INACTIVE, 0.0f, 0.0f);
+    }
+    lv_label_set_text(lbl_ok_val, "0");
+    lv_label_set_text(lbl_ng_val, "0");
+    lv_label_set_text(lbl_judge_badge, "--");
+    lv_obj_set_style_text_color(lbl_judge_badge, COL_MUTED, 0);
+}
+
+// カウンターリセットボタン: カウントのみクリア (タイマーは継続)
+static void btn_counter_reset_cb(lv_event_t *e)
+{
+    LV_UNUSED(e);
+    ok_count = 0;
+    ng_count = 0;
+    lv_label_set_text(lbl_ok_val, "0");
+    lv_label_set_text(lbl_ng_val, "0");
 }
 
 // ---- scr_main 生成 ----
@@ -442,6 +551,7 @@ static void create_scr_main(void)
     lv_label_set_text(lbl_reset, LV_SYMBOL_REFRESH "  Counter Reset");
     lv_obj_center(lbl_reset);
     lv_obj_set_style_text_font(lbl_reset, &lv_font_montserrat_12, 0);
+    lv_obj_add_event_cb(btn_counter_reset, btn_counter_reset_cb, LV_EVENT_CLICKED, NULL);
 
     // ── status_bar  x=0 y=462 w=800 h=18 ────────────────────
     // (44 + 418 = 462, 480 - 462 = 18)
