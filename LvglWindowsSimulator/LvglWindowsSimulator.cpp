@@ -97,6 +97,10 @@ static uint8_t pie_buf[100 * 100 * 4];
 static uint8_t    threshold_plot_buf[256 * 256 * 4];
 static lv_obj_t  *threshold_plot_canvas = NULL;
 
+// history XY plot canvas (400x290)
+static uint8_t    history_plot_buf[400 * 290 * 4];
+static lv_obj_t  *history_plot_canvas = NULL;
+
 // ---- 前方宣言 ----
 static void btn_start_cb(lv_event_t *e);
 static void btn_stop_cb(lv_event_t *e);
@@ -108,6 +112,7 @@ static void tile_open_cb(lv_event_t *e);
 static void draw_pie_chart(int32_t ok, int32_t ng);
 static void init_trend_chart(void);
 static void draw_threshold_plot(lv_timer_t *timer);
+static void draw_history_plot(lv_timer_t *timer);
 
 // ---- トレンドチャート定数・グローバル ----
 #define TREND_CH_MAX  5
@@ -1818,16 +1823,667 @@ static void create_scr_threshold(void)
     lv_timer_set_repeat_count(plot_timer, 1);
 }
 
+// ============================================================
+//  scr_history  XY plot canvas draw (one-shot timer)
+// ============================================================
+static void draw_history_plot(lv_timer_t *timer)
+{
+    LV_UNUSED(timer);
+    if (!history_plot_canvas) return;
+
+    lv_layer_t layer;
+    lv_canvas_init_layer(history_plot_canvas, &layer);
+
+    /* ── 1. Background ──────────────────────────────────────── */
+    {
+        lv_draw_rect_dsc_t r;
+        lv_draw_rect_dsc_init(&r);
+        r.bg_color     = lv_color_hex(0x111827);
+        r.bg_opa       = LV_OPA_COVER;
+        r.radius       = 0;
+        r.border_width = 0;
+        lv_area_t a    = {0, 0, 399, 289};
+        lv_draw_rect(&layer, &r, &a);
+    }
+
+    /* ── 2. Grid lines ──────────────────────────────────────── */
+    /* canvas coords: SVG_x - 40, SVG_y - 118
+       horizontal grid: SVG y=191→73, 263→145, 335→217
+       vertical grid:   SVG x=140→100, 240→200, 340→300       */
+    {
+        lv_draw_line_dsc_t g;
+        lv_draw_line_dsc_init(&g);
+        g.color = lv_color_hex(0x1e293b);
+        g.width = 1;
+        g.opa   = LV_OPA_COVER;
+        static const int32_t HY[] = {73, 145, 217};
+        for (int i = 0; i < 3; i++) {
+            g.p1.x = 0;   g.p1.y = HY[i];
+            g.p2.x = 399; g.p2.y = HY[i];
+            lv_draw_line(&layer, &g);
+        }
+        static const int32_t VX[] = {100, 200, 300};
+        for (int i = 0; i < 3; i++) {
+            g.p1.x = VX[i]; g.p1.y = 0;
+            g.p2.x = VX[i]; g.p2.y = 289;
+            lv_draw_line(&layer, &g);
+        }
+    }
+
+    /* ── 3. Axis lines ──────────────────────────────────────── */
+    {
+        lv_draw_line_dsc_t ax;
+        lv_draw_line_dsc_init(&ax);
+        ax.color = lv_color_hex(0x2d3748);
+        ax.width = 1;
+        ax.opa   = LV_OPA_COVER;
+        ax.p1.x = 0;   ax.p1.y = 145; ax.p2.x = 399; ax.p2.y = 145;
+        lv_draw_line(&layer, &ax);
+        ax.p1.x = 200; ax.p1.y = 0;   ax.p2.x = 200; ax.p2.y = 289;
+        lv_draw_line(&layer, &ax);
+    }
+
+    /* ── 4. Axis labels ─────────────────────────────────────── */
+    {
+        lv_draw_label_dsc_t lbl;
+        lv_draw_label_dsc_init(&lbl);
+        lbl.font = &lv_font_montserrat_10;
+        lbl.opa  = LV_OPA_COVER;
+
+        lbl.color = lv_color_hex(0x475569);
+        lbl.text  = "X";
+        lv_area_t ax1 = {385, 148, 399, 161};
+        lv_draw_label(&layer, &lbl, &ax1);
+        lbl.text  = "Y";
+        lv_area_t ax2 = {202, 1, 215, 14};
+        lv_draw_label(&layer, &lbl, &ax2);
+
+        lbl.color = lv_color_hex(0x374151);
+        lbl.text  = "+2";
+        lv_area_t y1 = {1, 66, 20, 79};
+        lv_draw_label(&layer, &lbl, &y1);
+        lbl.text  = "-2";
+        lv_area_t y2 = {1, 210, 20, 223};
+        lv_draw_label(&layer, &lbl, &y2);
+        lbl.text  = "-2";
+        lv_area_t x1 = {90, 150, 110, 163};
+        lv_draw_label(&layer, &lbl, &x1);
+        lbl.text  = "+2";
+        lv_area_t x2 = {290, 150, 310, 163};
+        lv_draw_label(&layer, &lbl, &x2);
+    }
+
+    /* ── 5. Threshold ellipse (dashed, blue, θ=−25°) ────────── */
+    /* cx=200, cy=145, rx=133, ry=100 in canvas coords          */
+    {
+        lv_draw_line_dsc_t el;
+        lv_draw_line_dsc_init(&el);
+        el.color      = COL_BLUE;
+        el.width      = 2;
+        el.opa        = (lv_opa_t)153; /* 0.6×255 */
+        el.dash_width = 6;
+        el.dash_gap   = 3;
+        const double cx = 200.0, cy = 145.0;
+        const double rx = 133.0, ry = 100.0;
+        const double TH  = -25.0 * 3.14159265358979 / 180.0;
+        const double CTH = cos(TH), STH = sin(TH);
+        const double STEP = 3.14159265358979 / 30.0;
+        for (int i = 0; i < 60; i++) {
+            double t0 = i * STEP, t1 = (i + 1) * STEP;
+            el.p1.x = (int32_t)(cx + rx * cos(t0) * CTH - ry * sin(t0) * STH);
+            el.p1.y = (int32_t)(cy + rx * cos(t0) * STH + ry * sin(t0) * CTH);
+            el.p2.x = (int32_t)(cx + rx * cos(t1) * CTH - ry * sin(t1) * STH);
+            el.p2.y = (int32_t)(cy + rx * cos(t1) * STH + ry * sin(t1) * CTH);
+            lv_draw_line(&layer, &el);
+        }
+    }
+
+    /* ── 6. OK dots (20 green pts) ─────────────────────────── */
+    {
+        static const int32_t OKX[] = {228,215,234,221,230,218,238,224,232,210,
+                                       225,220,236,214,229,241,206,233,218,244};
+        static const int32_t OKY[] = {115,123,108,120,126,111,118,130,103,127,
+                                       117,134,112,119,107,124,133,138,102,116};
+        lv_draw_rect_dsc_t dot;
+        lv_draw_rect_dsc_init(&dot);
+        dot.bg_color     = lv_color_hex(0x22c55e);
+        dot.bg_opa       = (lv_opa_t)179; /* 0.7×255 */
+        dot.radius       = LV_RADIUS_CIRCLE;
+        dot.border_width = 0;
+        for (int i = 0; i < 20; i++) {
+            lv_area_t a = {OKX[i]-3, OKY[i]-3, OKX[i]+3, OKY[i]+3};
+            lv_draw_rect(&layer, &dot, &a);
+        }
+    }
+
+    /* ── 7. NG dots (6 red pts) ─────────────────────────────── */
+    {
+        static const int32_t NGX[] = {302, 316, 290,  96, 108,  84};
+        static const int32_t NGY[] = { 64,  52,  56, 228, 220, 234};
+        lv_draw_rect_dsc_t dot;
+        lv_draw_rect_dsc_init(&dot);
+        dot.bg_color     = lv_color_hex(0xef4444);
+        dot.bg_opa       = (lv_opa_t)230; /* 0.9×255 */
+        dot.radius       = LV_RADIUS_CIRCLE;
+        dot.border_width = 0;
+        for (int i = 0; i < 6; i++) {
+            lv_area_t a = {NGX[i]-4, NGY[i]-4, NGX[i]+4, NGY[i]+4};
+            lv_draw_rect(&layer, &dot, &a);
+        }
+    }
+
+    /* ── 8. Highlighted point ring (amber) at canvas(302,64) ── */
+    {
+        lv_draw_rect_dsc_t ring;
+        lv_draw_rect_dsc_init(&ring);
+        ring.radius       = LV_RADIUS_CIRCLE;
+        ring.bg_opa       = LV_OPA_TRANSP;
+        ring.border_color = lv_color_hex(0xfbbf24);
+        ring.border_width = 2;
+        ring.border_opa   = LV_OPA_COVER;
+        lv_area_t a = {295, 57, 309, 71};
+        lv_draw_rect(&layer, &ring, &a);
+    }
+
+    /* ── 9. Tooltip for highlighted point ───────────────────── */
+    {
+        lv_draw_rect_dsc_t tip;
+        lv_draw_rect_dsc_init(&tip);
+        tip.bg_color     = lv_color_hex(0x422006);
+        tip.bg_opa       = LV_OPA_COVER;
+        tip.border_color = lv_color_hex(0xf59e0b);
+        tip.border_width = 1;
+        tip.border_opa   = LV_OPA_COVER;
+        tip.radius       = 3;
+        lv_area_t ta = {278, 28, 378, 55};
+        lv_draw_rect(&layer, &tip, &ta);
+
+        lv_draw_label_dsc_t lbl;
+        lv_draw_label_dsc_init(&lbl);
+        lbl.font  = &lv_font_montserrat_10;
+        lbl.opa   = LV_OPA_COVER;
+        lbl.color = lv_color_hex(0xfbbf24);
+        lbl.text  = "2026-04-18  09:14";
+        lv_area_t tl1 = {281, 31, 376, 41};
+        lv_draw_label(&layer, &lbl, &tl1);
+        lbl.color = lv_color_hex(0xfca5a5);
+        lbl.text  = "X+2.89  Y-2.34  NG";
+        lv_area_t tl2 = {281, 42, 376, 54};
+        lv_draw_label(&layer, &lbl, &tl2);
+    }
+
+    lv_canvas_finish_layer(history_plot_canvas, &layer);
+}
+
+// ============================================================
+//  scr_history  履歴画面 (Filter bar + XY plot + Log list)
+// ============================================================
 static void create_scr_history(void)
 {
     lv_obj_t *c = make_settings_subscr(&scr_history, "History");
-    lv_obj_t *ph = lv_label_create(c);
-    lv_label_set_text(ph, "History\n(Log & CSV export)");
-    lv_obj_set_style_text_color(ph, COL_MUTED, 0);
-    lv_obj_set_style_text_font(ph, &lv_font_montserrat_16, 0);
-    lv_label_set_long_mode(ph, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(ph, 400);
-    lv_obj_center(ph);
+    /* content_y = SVG_y - 44 */
+
+    /* ── Filter bar (content y=0..44) ────────────────────────── */
+
+    /* "From" label */
+    {
+        lv_obj_t *lbl = lv_label_create(c);
+        lv_label_set_text(lbl, "From");
+        lv_obj_set_pos(lbl, 16, 5);
+        lv_obj_set_style_text_color(lbl, lv_color_hex(0x475569), 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+    }
+    /* Date from field content(16,22,110,20) */
+    {
+        lv_obj_t *box = lv_obj_create(c);
+        lv_obj_set_pos(box, 16, 22);
+        lv_obj_set_size(box, 110, 20);
+        lv_obj_set_style_bg_color(box, lv_color_hex(0x1e293b), 0);
+        lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_color(box, lv_color_hex(0x334155), 0);
+        lv_obj_set_style_border_width(box, 1, 0);
+        lv_obj_set_style_radius(box, 4, 0);
+        lv_obj_set_style_pad_all(box, 0, 0);
+        lv_obj_remove_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_t *txt = lv_label_create(box);
+        lv_label_set_text(txt, "2026-04-01");
+        lv_obj_center(txt);
+        lv_obj_set_style_text_color(txt, lv_color_hex(0x94a3b8), 0);
+        lv_obj_set_style_text_font(txt, &lv_font_montserrat_10, 0);
+    }
+
+    /* "~" separator */
+    {
+        lv_obj_t *sep = lv_label_create(c);
+        lv_label_set_text(sep, "~");
+        lv_obj_set_pos(sep, 130, 27);
+        lv_obj_set_style_text_color(sep, lv_color_hex(0x475569), 0);
+        lv_obj_set_style_text_font(sep, &lv_font_montserrat_10, 0);
+    }
+
+    /* "To" label */
+    {
+        lv_obj_t *lbl = lv_label_create(c);
+        lv_label_set_text(lbl, "To");
+        lv_obj_set_pos(lbl, 144, 5);
+        lv_obj_set_style_text_color(lbl, lv_color_hex(0x475569), 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+    }
+    /* Date to field content(144,22,110,20) */
+    {
+        lv_obj_t *box = lv_obj_create(c);
+        lv_obj_set_pos(box, 144, 22);
+        lv_obj_set_size(box, 110, 20);
+        lv_obj_set_style_bg_color(box, lv_color_hex(0x1e293b), 0);
+        lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_color(box, lv_color_hex(0x334155), 0);
+        lv_obj_set_style_border_width(box, 1, 0);
+        lv_obj_set_style_radius(box, 4, 0);
+        lv_obj_set_style_pad_all(box, 0, 0);
+        lv_obj_remove_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_t *txt = lv_label_create(box);
+        lv_label_set_text(txt, "2026-04-20");
+        lv_obj_center(txt);
+        lv_obj_set_style_text_color(txt, lv_color_hex(0x94a3b8), 0);
+        lv_obj_set_style_text_font(txt, &lv_font_montserrat_10, 0);
+    }
+
+    /* Quick range buttons content(264/313/362, 22, 44, 20) */
+    {
+        static const char *const RNG_LBL[] = {"Today", "7 days", "30 days"};
+        static const int32_t RNG_X[] = {264, 313, 362};
+        static const bool    RNG_SEL[] = {false, false, true};
+        for (int i = 0; i < 3; i++) {
+            lv_obj_t *btn = lv_obj_create(c);
+            lv_obj_set_pos(btn, RNG_X[i], 22);
+            lv_obj_set_size(btn, 44, 20);
+            lv_obj_set_style_bg_color(btn, RNG_SEL[i] ? lv_color_hex(0x1e3a5f)
+                                                       : lv_color_hex(0x1e293b), 0);
+            lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+            lv_obj_set_style_border_color(btn, RNG_SEL[i] ? lv_color_hex(0x1d4ed8)
+                                                           : lv_color_hex(0x334155), 0);
+            lv_obj_set_style_border_width(btn, 1, 0);
+            lv_obj_set_style_radius(btn, 4, 0);
+            lv_obj_set_style_pad_all(btn, 0, 0);
+            lv_obj_remove_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_t *lbl = lv_label_create(btn);
+            lv_label_set_text(lbl, RNG_LBL[i]);
+            lv_obj_center(lbl);
+            lv_obj_set_style_text_color(lbl, RNG_SEL[i] ? lv_color_hex(0x93c5fd)
+                                                         : lv_color_hex(0x64748b), 0);
+            lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+        }
+    }
+
+    /* Ch filter label */
+    {
+        lv_obj_t *lbl = lv_label_create(c);
+        lv_label_set_text(lbl, "Ch filter");
+        lv_obj_set_pos(lbl, 422, 5);
+        lv_obj_set_style_text_color(lbl, lv_color_hex(0x475569), 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+    }
+    /* Ch filter buttons content(422/471/520/569, 22, 44, 20) */
+    {
+        static const char *const CH_LBL[] = {"Ch 1", "Ch 2", "Ch 3", "All"};
+        static const int32_t CH_X[] = {422, 471, 520, 569};
+        static const bool    CH_SEL[] = {true, false, false, false};
+        for (int i = 0; i < 4; i++) {
+            lv_obj_t *btn = lv_obj_create(c);
+            lv_obj_set_pos(btn, CH_X[i], 22);
+            lv_obj_set_size(btn, 44, 20);
+            lv_obj_set_style_bg_color(btn, CH_SEL[i] ? lv_color_hex(0x1e3a5f)
+                                                      : lv_color_hex(0x1e293b), 0);
+            lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+            lv_obj_set_style_border_color(btn, CH_SEL[i] ? COL_BLUE
+                                                          : lv_color_hex(0x334155), 0);
+            lv_obj_set_style_border_width(btn, 1, 0);
+            lv_obj_set_style_radius(btn, 4, 0);
+            lv_obj_set_style_pad_all(btn, 0, 0);
+            lv_obj_remove_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_t *lbl = lv_label_create(btn);
+            lv_label_set_text(lbl, CH_LBL[i]);
+            lv_obj_center(lbl);
+            lv_obj_set_style_text_color(lbl, CH_SEL[i] ? lv_color_hex(0x93c5fd)
+                                                        : lv_color_hex(0x475569), 0);
+            lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+        }
+    }
+
+    /* Count label content(628,5) */
+    {
+        lv_obj_t *lbl = lv_label_create(c);
+        lv_label_set_text(lbl, "248 pts");
+        lv_obj_set_pos(lbl, 628, 5);
+        lv_obj_set_style_text_color(lbl, lv_color_hex(0x475569), 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+    }
+
+    /* CSV Export button content(628,22,74,20) */
+    {
+        lv_obj_t *btn = lv_obj_create(c);
+        lv_obj_set_pos(btn, 628, 22);
+        lv_obj_set_size(btn, 74, 20);
+        lv_obj_set_style_bg_color(btn, lv_color_hex(0x1e293b), 0);
+        lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_color(btn, lv_color_hex(0x334155), 0);
+        lv_obj_set_style_border_width(btn, 1, 0);
+        lv_obj_set_style_radius(btn, 4, 0);
+        lv_obj_set_style_pad_all(btn, 0, 0);
+        lv_obj_remove_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_t *lbl = lv_label_create(btn);
+        lv_label_set_text(lbl, "CSV Export");
+        lv_obj_center(lbl);
+        lv_obj_set_style_text_color(lbl, lv_color_hex(0x64748b), 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+    }
+
+    /* Filter divider at content y=43 */
+    {
+        lv_obj_t *div = lv_obj_create(c);
+        lv_obj_set_pos(div, 0, 43);
+        lv_obj_set_size(div, 800, 1);
+        lv_obj_set_style_bg_color(div, lv_color_hex(0x1e293b), 0);
+        lv_obj_set_style_bg_opa(div, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(div, 0, 0);
+        lv_obj_set_style_radius(div, 0, 0);
+        lv_obj_set_style_pad_all(div, 0, 0);
+        lv_obj_remove_flag(div, LV_OBJ_FLAG_SCROLLABLE);
+    }
+
+    /* ── XY Plot panel content(8,52,452,340) ─────────────────── */
+    lv_obj_t *xy_panel = lv_obj_create(c);
+    lv_obj_set_pos(xy_panel, 8, 52);
+    lv_obj_set_size(xy_panel, 452, 340);
+    lv_obj_set_style_bg_color(xy_panel, COL_BG, 0);
+    lv_obj_set_style_bg_opa(xy_panel, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(xy_panel, COL_SURFACE, 0);
+    lv_obj_set_style_border_width(xy_panel, 1, 0);
+    lv_obj_set_style_radius(xy_panel, 8, 0);
+    lv_obj_set_style_pad_all(xy_panel, 0, 0);
+    lv_obj_remove_flag(xy_panel, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* Plot title */
+    {
+        lv_obj_t *ttl = lv_label_create(xy_panel);
+        lv_label_set_text(ttl, "X-Y Plot  Ch 1  /  30 days  (248)");
+        lv_obj_set_pos(ttl, 12, 8);
+        lv_obj_set_width(ttl, 428);
+        lv_obj_set_style_text_align(ttl, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_color(ttl, lv_color_hex(0x475569), 0);
+        lv_obj_set_style_text_font(ttl, &lv_font_montserrat_10, 0);
+    }
+
+    /* Canvas 400×290 at panel(32,22) */
+    history_plot_canvas = lv_canvas_create(xy_panel);
+    lv_canvas_set_buffer(history_plot_canvas,
+                         history_plot_buf, 400, 290, LV_COLOR_FORMAT_ARGB8888);
+    lv_obj_set_pos(history_plot_canvas, 32, 22);
+
+    /* Legend dots below canvas (panel y≈308..328) */
+    {
+        lv_obj_t *ok_dot = lv_obj_create(xy_panel);
+        lv_obj_set_pos(ok_dot, 14, 308);
+        lv_obj_set_size(ok_dot, 8, 8);
+        lv_obj_set_style_bg_color(ok_dot, lv_color_hex(0x22c55e), 0);
+        lv_obj_set_style_bg_opa(ok_dot, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(ok_dot, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_border_width(ok_dot, 0, 0);
+        lv_obj_set_style_pad_all(ok_dot, 0, 0);
+        lv_obj_remove_flag(ok_dot, LV_OBJ_FLAG_SCROLLABLE);
+
+        lv_obj_t *ok_lbl = lv_label_create(xy_panel);
+        lv_label_set_text(ok_lbl, "OK (242)");
+        lv_obj_set_pos(ok_lbl, 25, 305);
+        lv_obj_set_style_text_color(ok_lbl, lv_color_hex(0x86efac), 0);
+        lv_obj_set_style_text_font(ok_lbl, &lv_font_montserrat_10, 0);
+
+        lv_obj_t *ng_dot = lv_obj_create(xy_panel);
+        lv_obj_set_pos(ng_dot, 14, 320);
+        lv_obj_set_size(ng_dot, 8, 8);
+        lv_obj_set_style_bg_color(ng_dot, lv_color_hex(0xef4444), 0);
+        lv_obj_set_style_bg_opa(ng_dot, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(ng_dot, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_border_width(ng_dot, 0, 0);
+        lv_obj_set_style_pad_all(ng_dot, 0, 0);
+        lv_obj_remove_flag(ng_dot, LV_OBJ_FLAG_SCROLLABLE);
+
+        lv_obj_t *ng_lbl = lv_label_create(xy_panel);
+        lv_label_set_text(ng_lbl, "NG (6)");
+        lv_obj_set_pos(ng_lbl, 25, 317);
+        lv_obj_set_style_text_color(ng_lbl, lv_color_hex(0xfca5a5), 0);
+        lv_obj_set_style_text_font(ng_lbl, &lv_font_montserrat_10, 0);
+
+        lv_obj_t *ell_lbl = lv_label_create(xy_panel);
+        lv_label_set_text(ell_lbl, "--- Ellipse");
+        lv_obj_set_pos(ell_lbl, 100, 311);
+        lv_obj_set_style_text_color(ell_lbl, lv_color_hex(0x7dd3fc), 0);
+        lv_obj_set_style_text_font(ell_lbl, &lv_font_montserrat_10, 0);
+    }
+
+    /* ── Right log panel content(468,52,324,340) ─────────────── */
+    lv_obj_t *log_panel = lv_obj_create(c);
+    lv_obj_set_pos(log_panel, 468, 52);
+    lv_obj_set_size(log_panel, 324, 340);
+    lv_obj_set_style_bg_color(log_panel, COL_BG, 0);
+    lv_obj_set_style_bg_opa(log_panel, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(log_panel, COL_SURFACE, 0);
+    lv_obj_set_style_border_width(log_panel, 1, 0);
+    lv_obj_set_style_radius(log_panel, 8, 0);
+    lv_obj_set_style_pad_all(log_panel, 0, 0);
+    lv_obj_remove_flag(log_panel, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* Panel title at panel(12,6) */
+    {
+        lv_obj_t *ttl = lv_label_create(log_panel);
+        lv_label_set_text(ttl, "Log  (newest first)");
+        lv_obj_set_pos(ttl, 12, 6);
+        lv_obj_set_style_text_color(ttl, lv_color_hex(0x475569), 0);
+        lv_obj_set_style_text_font(ttl, &lv_font_montserrat_10, 0);
+    }
+
+    /* Header row at panel(0,22,324,22) */
+    {
+        lv_obj_t *hdr = lv_obj_create(log_panel);
+        lv_obj_set_pos(hdr, 0, 22);
+        lv_obj_set_size(hdr, 324, 22);
+        lv_obj_set_style_bg_color(hdr, COL_BG, 0);
+        lv_obj_set_style_bg_opa(hdr, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(hdr, 0, 0);
+        lv_obj_set_style_border_width(hdr, 0, 0);
+        lv_obj_set_style_pad_all(hdr, 0, 0);
+        lv_obj_remove_flag(hdr, LV_OBJ_FLAG_SCROLLABLE);
+        /* col centers (panel-inner x): date=38, X=126, Y=182, dist=238, judge=294 */
+        static const char *const HDR_LBL[] = {"Date/Time", "X [V]", "Y [V]", "Dist.", "Judge"};
+        static const int32_t HDR_CX[] = {38, 126, 182, 238, 294};
+        for (int i = 0; i < 5; i++) {
+            lv_obj_t *lbl = lv_label_create(hdr);
+            lv_label_set_text(lbl, HDR_LBL[i]);
+            lv_obj_set_pos(lbl, HDR_CX[i] - 22, 5);
+            lv_obj_set_width(lbl, 44);
+            lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
+            lv_obj_set_style_text_color(lbl, lv_color_hex(0x475569), 0);
+            lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+        }
+    }
+
+    /* 7 data rows */
+    {
+        struct RowData {
+            int32_t     panel_y;
+            bool        highlight;
+            uint32_t    bg;
+            uint32_t    bar_col;
+            const char *date1;
+            const char *date2;
+            const char *xv;
+            const char *yv;
+            const char *dist;
+            uint32_t    badge_bg;
+            const char *judge;
+            uint32_t    val_col;
+            uint32_t    badge_txt;
+        };
+        static const RowData ROWS[] = {
+            {44,  true,  0x2a1a0a, 0xfbbf24, "04-18","09:14:22","+2.891","-2.340","1.25", 0x7f1d1d,"NG",0xfca5a5,0xfca5a5},
+            {76,  false, 0x111827, 0x1e293b,  "04-18","09:13:05","+1.243","-0.872","0.58", 0x14532d,"OK",0x6ee7b7,0x4ade80},
+            {108, false, 0x0f172a, 0x1e293b,  "04-18","09:11:48","+1.198","-0.791","0.56", 0x14532d,"OK",0x6ee7b7,0x4ade80},
+            {140, false, 0x111827, 0x1e293b,  "04-17","14:52:11","+2.654","-2.180","1.18", 0x7f1d1d,"NG",0xfca5a5,0xfca5a5},
+            {172, false, 0x0f172a, 0x1e293b,  "04-17","14:50:33","+1.054","-0.912","0.57", 0x14532d,"OK",0x6ee7b7,0x4ade80},
+            {204, false, 0x111827, 0x1e293b,  "04-17","11:23:07","+1.187","-0.843","0.60", 0x14532d,"OK",0x6ee7b7,0x4ade80},
+            {236, false, 0x0f172a, 0x1e293b,  "04-16","16:08:44","+1.302","-0.804","0.62", 0x14532d,"OK",0x6ee7b7,0x4ade80},
+        };
+        /* value col centers (row-local x): X=126, Y=182, Dist=238 */
+        static const int32_t VCOL_CX[] = {126, 182, 238};
+
+        for (int i = 0; i < 7; i++) {
+            const RowData &rd = ROWS[i];
+            lv_obj_t *row = lv_obj_create(log_panel);
+            lv_obj_set_pos(row, 0, rd.panel_y);
+            lv_obj_set_size(row, 324, 32);
+            lv_obj_set_style_bg_color(row, lv_color_hex(rd.bg), 0);
+            lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
+            lv_obj_set_style_radius(row, 0, 0);
+            lv_obj_set_style_pad_all(row, 0, 0);
+            lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+            if (rd.highlight) {
+                lv_obj_set_style_border_color(row, lv_color_hex(0xf59e0b), 0);
+                lv_obj_set_style_border_width(row, 1, 0);
+            } else {
+                lv_obj_set_style_border_width(row, 0, 0);
+            }
+
+            /* Accent bar 3px at left */
+            lv_obj_t *bar = lv_obj_create(row);
+            lv_obj_set_pos(bar, 0, 0);
+            lv_obj_set_size(bar, 3, 32);
+            lv_obj_set_style_bg_color(bar, lv_color_hex(rd.bar_col), 0);
+            lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+            lv_obj_set_style_radius(bar, 0, 0);
+            lv_obj_set_style_border_width(bar, 0, 0);
+            lv_obj_set_style_pad_all(bar, 0, 0);
+            lv_obj_remove_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
+
+            /* Date line 1 */
+            lv_obj_t *d1 = lv_label_create(row);
+            lv_label_set_text(d1, rd.date1);
+            lv_obj_set_pos(d1, 8, 5);
+            lv_obj_set_style_text_color(d1, rd.highlight ? lv_color_hex(0xfbbf24)
+                                                          : lv_color_hex(0x475569), 0);
+            lv_obj_set_style_text_font(d1, &lv_font_montserrat_10, 0);
+
+            /* Date line 2 */
+            lv_obj_t *d2 = lv_label_create(row);
+            lv_label_set_text(d2, rd.date2);
+            lv_obj_set_pos(d2, 8, 18);
+            lv_obj_set_style_text_color(d2, rd.highlight ? lv_color_hex(0xfbbf24)
+                                                          : lv_color_hex(0x475569), 0);
+            lv_obj_set_style_text_font(d2, &lv_font_montserrat_10, 0);
+
+            /* X, Y, Dist value labels centered at each column */
+            const char *vcols[] = {rd.xv, rd.yv, rd.dist};
+            for (int j = 0; j < 3; j++) {
+                lv_obj_t *vl = lv_label_create(row);
+                lv_label_set_text(vl, vcols[j]);
+                lv_obj_set_pos(vl, VCOL_CX[j] - 22, 10);
+                lv_obj_set_width(vl, 44);
+                lv_obj_set_style_text_align(vl, LV_TEXT_ALIGN_CENTER, 0);
+                lv_obj_set_style_text_color(vl, lv_color_hex(rd.val_col), 0);
+                lv_obj_set_style_text_font(vl, &lv_font_montserrat_10, 0);
+            }
+
+            /* Judge badge at row(278,7,36,18) */
+            lv_obj_t *badge = lv_obj_create(row);
+            lv_obj_set_pos(badge, 278, 7);
+            lv_obj_set_size(badge, 36, 18);
+            lv_obj_set_style_bg_color(badge, lv_color_hex(rd.badge_bg), 0);
+            lv_obj_set_style_bg_opa(badge, LV_OPA_COVER, 0);
+            lv_obj_set_style_radius(badge, 3, 0);
+            lv_obj_set_style_border_width(badge, 0, 0);
+            lv_obj_set_style_pad_all(badge, 0, 0);
+            lv_obj_remove_flag(badge, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_t *jlbl = lv_label_create(badge);
+            lv_label_set_text(jlbl, rd.judge);
+            lv_obj_center(jlbl);
+            lv_obj_set_style_text_color(jlbl, lv_color_hex(rd.badge_txt), 0);
+            lv_obj_set_style_text_font(jlbl, &lv_font_montserrat_10, 0);
+        }
+    }
+
+    /* Scroll hint at panel(0,268,324,32) */
+    {
+        lv_obj_t *hint = lv_obj_create(log_panel);
+        lv_obj_set_pos(hint, 0, 268);
+        lv_obj_set_size(hint, 324, 32);
+        lv_obj_set_style_bg_color(hint, lv_color_hex(0x0a0f1a), 0);
+        lv_obj_set_style_bg_opa(hint, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(hint, 0, 0);
+        lv_obj_set_style_border_width(hint, 0, 0);
+        lv_obj_set_style_pad_all(hint, 0, 0);
+        lv_obj_remove_flag(hint, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_t *lbl = lv_label_create(hint);
+        lv_label_set_text(lbl, LV_SYMBOL_DOWN "  241 more...");
+        lv_obj_center(lbl);
+        lv_obj_set_style_text_color(lbl, lv_color_hex(0x334155), 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+    }
+
+    /* Summary bar at panel(0,310,324,30) */
+    {
+        lv_obj_t *sumbar = lv_obj_create(log_panel);
+        lv_obj_set_pos(sumbar, 0, 310);
+        lv_obj_set_size(sumbar, 324, 30);
+        lv_obj_set_style_bg_color(sumbar, COL_BG, 0);
+        lv_obj_set_style_bg_opa(sumbar, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_color(sumbar, COL_SURFACE, 0);
+        lv_obj_set_style_border_width(sumbar, 1, 0);
+        lv_obj_set_style_radius(sumbar, 0, 0);
+        lv_obj_set_style_pad_all(sumbar, 0, 0);
+        lv_obj_remove_flag(sumbar, LV_OBJ_FLAG_SCROLLABLE);
+
+        /* OK badge at sumbar(12,8,56,14) */
+        lv_obj_t *ok_b = lv_obj_create(sumbar);
+        lv_obj_set_pos(ok_b, 12, 8);
+        lv_obj_set_size(ok_b, 56, 14);
+        lv_obj_set_style_bg_color(ok_b, lv_color_hex(0x14532d), 0);
+        lv_obj_set_style_bg_opa(ok_b, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(ok_b, 3, 0);
+        lv_obj_set_style_border_width(ok_b, 0, 0);
+        lv_obj_set_style_pad_all(ok_b, 0, 0);
+        lv_obj_remove_flag(ok_b, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_t *ok_l = lv_label_create(ok_b);
+        lv_label_set_text(ok_l, "OK  242");
+        lv_obj_center(ok_l);
+        lv_obj_set_style_text_color(ok_l, lv_color_hex(0x4ade80), 0);
+        lv_obj_set_style_text_font(ok_l, &lv_font_montserrat_10, 0);
+
+        /* NG badge at sumbar(78,8,48,14) */
+        lv_obj_t *ng_b = lv_obj_create(sumbar);
+        lv_obj_set_pos(ng_b, 78, 8);
+        lv_obj_set_size(ng_b, 48, 14);
+        lv_obj_set_style_bg_color(ng_b, lv_color_hex(0x7f1d1d), 0);
+        lv_obj_set_style_bg_opa(ng_b, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(ng_b, 3, 0);
+        lv_obj_set_style_border_width(ng_b, 0, 0);
+        lv_obj_set_style_pad_all(ng_b, 0, 0);
+        lv_obj_remove_flag(ng_b, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_t *ng_l = lv_label_create(ng_b);
+        lv_label_set_text(ng_l, "NG  6");
+        lv_obj_center(ng_l);
+        lv_obj_set_style_text_color(ng_l, lv_color_hex(0xfca5a5), 0);
+        lv_obj_set_style_text_font(ng_l, &lv_font_montserrat_10, 0);
+
+        /* Pass rate label at sumbar(140,10) */
+        lv_obj_t *rate = lv_label_create(sumbar);
+        lv_label_set_text(rate, "Pass rate  97.6%");
+        lv_obj_set_pos(rate, 140, 9);
+        lv_obj_set_style_text_color(rate, lv_color_hex(0x475569), 0);
+        lv_obj_set_style_text_font(rate, &lv_font_montserrat_10, 0);
+    }
+
+    /* One-shot timer to draw XY plot canvas */
+    lv_timer_t *plot_timer = lv_timer_create(draw_history_plot, 50, NULL);
+    lv_timer_set_repeat_count(plot_timer, 1);
 }
 
 static void create_scr_correction(void)
