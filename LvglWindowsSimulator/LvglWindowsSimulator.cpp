@@ -93,6 +93,10 @@ static lv_obj_t *lbl_latest_ng;
 // pie_area バッファ (100x100 / ARGB8888 想定で 4byte/pixel)
 static uint8_t pie_buf[100 * 100 * 4];
 
+// threshold XY plot canvas (256x256)
+static uint8_t    threshold_plot_buf[256 * 256 * 4];
+static lv_obj_t  *threshold_plot_canvas = NULL;
+
 // ---- 前方宣言 ----
 static void btn_start_cb(lv_event_t *e);
 static void btn_stop_cb(lv_event_t *e);
@@ -103,6 +107,7 @@ static void btn_back_to_settings_cb(lv_event_t *e);
 static void tile_open_cb(lv_event_t *e);
 static void draw_pie_chart(int32_t ok, int32_t ng);
 static void init_trend_chart(void);
+static void draw_threshold_plot(lv_timer_t *timer);
 
 // ---- トレンドチャート定数・グローバル ----
 #define TREND_CH_MAX  5
@@ -1107,16 +1112,710 @@ static void create_scr_meas_cond(void)
     lv_obj_center(lbl_next);
 }
 
+// ============================================================
+//  threshold XY plot  canvas描画 (one-shot timer から呼ぶ)
+//  Canvas 256x256, ARGB8888, center=(128,128), scale=32px/V
+//  OK cluster center: canvas (168,94)
+//  Fitted ellipse: rx=26 ry=20 (dashed)
+//  Applied ellipse: rx=31 ry=24 (solid, k=1.20)
+// ============================================================
+static void draw_threshold_plot(lv_timer_t *timer)
+{
+    LV_UNUSED(timer);
+    if (!threshold_plot_canvas) return;
+
+    lv_layer_t layer;
+    lv_canvas_init_layer(threshold_plot_canvas, &layer);
+
+    /* ── 1. Background ─────────────────────────────────────── */
+    {
+        lv_draw_rect_dsc_t r;
+        lv_draw_rect_dsc_init(&r);
+        r.bg_color    = lv_color_hex(0x111827);
+        r.bg_opa      = LV_OPA_COVER;
+        r.radius      = 0;
+        r.border_width = 0;
+        lv_area_t a   = {0, 0, 255, 255};
+        lv_draw_rect(&layer, &r, &a);
+    }
+
+    /* ── 2. Grid lines at ±2V (64px from center 128,128) ─── */
+    {
+        lv_draw_line_dsc_t g;
+        lv_draw_line_dsc_init(&g);
+        g.color = lv_color_hex(0x1e293b);
+        g.width = 1;
+        g.opa   = LV_OPA_COVER;
+        static const int32_t HY[] = {64, 192};
+        static const int32_t VX[] = {64, 192};
+        for (int i = 0; i < 2; i++) {
+            g.p1.x = 0;   g.p1.y = HY[i];
+            g.p2.x = 255; g.p2.y = HY[i];
+            lv_draw_line(&layer, &g);
+        }
+        for (int i = 0; i < 2; i++) {
+            g.p1.x = VX[i]; g.p1.y = 0;
+            g.p2.x = VX[i]; g.p2.y = 255;
+            lv_draw_line(&layer, &g);
+        }
+    }
+
+    /* ── 3. X / Y axes ─────────────────────────────────────── */
+    {
+        lv_draw_line_dsc_t ax;
+        lv_draw_line_dsc_init(&ax);
+        ax.color = lv_color_hex(0x2d3748);
+        ax.width = 1;
+        ax.opa   = LV_OPA_COVER;
+        ax.p1.x = 0;   ax.p1.y = 128; ax.p2.x = 255; ax.p2.y = 128;
+        lv_draw_line(&layer, &ax);
+        ax.p1.x = 128; ax.p1.y = 0;   ax.p2.x = 128; ax.p2.y = 255;
+        lv_draw_line(&layer, &ax);
+    }
+
+    /* ── 4. Axis labels ─────────────────────────────────────── */
+    {
+        lv_draw_label_dsc_t lbl;
+        lv_draw_label_dsc_init(&lbl);
+        lbl.font = &lv_font_montserrat_10;
+        lbl.opa  = LV_OPA_COVER;
+
+        lbl.color = lv_color_hex(0x475569);
+        lbl.text  = "X";
+        lv_area_t a1 = {240, 120, 255, 133};
+        lv_draw_label(&layer, &lbl, &a1);
+
+        lbl.text  = "Y";
+        lv_area_t a2 = {130, 0, 145, 13};
+        lv_draw_label(&layer, &lbl, &a2);
+
+        lbl.color = lv_color_hex(0x374151);
+        lbl.text  = "+2";
+        lv_area_t a3 = {183, 130, 207, 143};
+        lv_draw_label(&layer, &lbl, &a3);
+
+        lbl.text  = "-2";
+        lv_area_t a4 = {50, 130, 74, 143};
+        lv_draw_label(&layer, &lbl, &a4);
+
+        lbl.text  = "+2";
+        lv_area_t a5 = {130, 57, 154, 70};
+        lv_draw_label(&layer, &lbl, &a5);
+
+        lbl.text  = "-2";
+        lv_area_t a6 = {130, 185, 154, 198};
+        lv_draw_label(&layer, &lbl, &a6);
+    }
+
+    /* ── 5. OK sample dots (green, 7 pts) ──────────────────── */
+    {
+        static const int32_t OX[] = {170, 166, 172, 168, 164, 171, 167};
+        static const int32_t OY[] = { 94,  98,  91,  96,  92,  99,  89};
+        lv_draw_rect_dsc_t dot;
+        lv_draw_rect_dsc_init(&dot);
+        dot.bg_color    = lv_color_hex(0x22c55e);
+        dot.bg_opa      = (lv_opa_t)204;
+        dot.radius      = LV_RADIUS_CIRCLE;
+        dot.border_width = 0;
+        for (int i = 0; i < 7; i++) {
+            lv_area_t a = {OX[i]-3, OY[i]-3, OX[i]+3, OY[i]+3};
+            lv_draw_rect(&layer, &dot, &a);
+        }
+    }
+
+    /* ── 6. NG sample dots (red, 5 pts) ────────────────────── */
+    {
+        static const int32_t NX[] = {222, 227, 217,  32,  37};
+        static const int32_t NY[] = { 54,  48,  58, 206, 212};
+        lv_draw_rect_dsc_t dot;
+        lv_draw_rect_dsc_init(&dot);
+        dot.bg_color    = lv_color_hex(0xef4444);
+        dot.bg_opa      = (lv_opa_t)204;
+        dot.radius      = LV_RADIUS_CIRCLE;
+        dot.border_width = 0;
+        for (int i = 0; i < 5; i++) {
+            lv_area_t a = {NX[i]-3, NY[i]-3, NX[i]+3, NY[i]+3};
+            lv_draw_rect(&layer, &dot, &a);
+        }
+    }
+
+    /* ── 7. Fitted ellipse (dashed, 50% opacity, rx=26 ry=20) */
+    {
+        lv_draw_line_dsc_t el;
+        lv_draw_line_dsc_init(&el);
+        el.color      = COL_BLUE;
+        el.width      = 1;
+        el.opa        = LV_OPA_50;
+        el.dash_width = 4;
+        el.dash_gap   = 3;
+        const double STEP = 3.14159265358979 / 30.0;
+        for (int i = 0; i < 60; i++) {
+            double a1 = i * STEP, a2 = (i + 1) * STEP;
+            el.p1.x = (int32_t)(168.0 + 26.0 * cos(a1));
+            el.p1.y = (int32_t)( 94.0 + 20.0 * sin(a1));
+            el.p2.x = (int32_t)(168.0 + 26.0 * cos(a2));
+            el.p2.y = (int32_t)( 94.0 + 20.0 * sin(a2));
+            lv_draw_line(&layer, &el);
+        }
+    }
+
+    /* ── 8. Applied ellipse (solid, 90% opacity, rx=31 ry=24) */
+    {
+        lv_draw_line_dsc_t el;
+        lv_draw_line_dsc_init(&el);
+        el.color = COL_BLUE;
+        el.width = 2;
+        el.opa   = (lv_opa_t)230;
+        const double STEP = 3.14159265358979 / 30.0;
+        for (int i = 0; i < 60; i++) {
+            double a1 = i * STEP, a2 = (i + 1) * STEP;
+            el.p1.x = (int32_t)(168.0 + 31.0 * cos(a1));
+            el.p1.y = (int32_t)( 94.0 + 24.0 * sin(a1));
+            el.p2.x = (int32_t)(168.0 + 31.0 * cos(a2));
+            el.p2.y = (int32_t)( 94.0 + 24.0 * sin(a2));
+            lv_draw_line(&layer, &el);
+        }
+    }
+
+    /* ── 9. a / b axis guide lines (dashed) ────────────────── */
+    {
+        lv_draw_line_dsc_t g;
+        lv_draw_line_dsc_init(&g);
+        g.color      = COL_BLUE;
+        g.width      = 1;
+        g.opa        = LV_OPA_50;
+        g.dash_width = 3;
+        g.dash_gap   = 2;
+        g.p1.x = 168; g.p1.y = 94; g.p2.x = 199; g.p2.y = 94;
+        lv_draw_line(&layer, &g);
+        g.p1.x = 168; g.p1.y = 94; g.p2.x = 168; g.p2.y = 70;
+        lv_draw_line(&layer, &g);
+    }
+
+    /* ── 10. "a" / "b" axis labels ─────────────────────────── */
+    {
+        lv_draw_label_dsc_t lbl;
+        lv_draw_label_dsc_init(&lbl);
+        lbl.font  = &lv_font_montserrat_10;
+        lbl.opa   = LV_OPA_COVER;
+        lbl.color = COL_BLUE;
+        lbl.text  = "a";
+        lv_area_t a1 = {201, 87, 214, 100};
+        lv_draw_label(&layer, &lbl, &a1);
+        lbl.text  = "b";
+        lv_area_t a2 = {170, 59, 183, 72};
+        lv_draw_label(&layer, &lbl, &a2);
+    }
+
+    lv_canvas_finish_layer(threshold_plot_canvas, &layer);
+}
+
+// ============================================================
+//  scr_threshold  閾値設定画面 (3ペイン)
+// ============================================================
 static void create_scr_threshold(void)
 {
     lv_obj_t *c = make_settings_subscr(&scr_threshold, "Threshold");
-    lv_obj_t *ph = lv_label_create(c);
-    lv_label_set_text(ph, "Threshold\n(Ellipse params)");
-    lv_obj_set_style_text_color(ph, COL_MUTED, 0);
-    lv_obj_set_style_text_font(ph, &lv_font_montserrat_16, 0);
-    lv_label_set_long_mode(ph, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(ph, 400);
-    lv_obj_center(ph);
+    // c = content container 800×436, y=44 on screen
+    // Coordinate mapping: content_(x,y) = SVG_(x, y-44)
+
+    // ── LEFT: Channel list  x=8 y=8 w=150 h=410 ─────────────
+    lv_obj_t *ch_panel = lv_obj_create(c);
+    lv_obj_set_pos(ch_panel, 8, 8);
+    lv_obj_set_size(ch_panel, 150, 410);
+    lv_obj_set_style_bg_color(ch_panel, COL_BG, 0);
+    lv_obj_set_style_bg_opa(ch_panel, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(ch_panel, 8, 0);
+    lv_obj_set_style_border_color(ch_panel, COL_SURFACE, 0);
+    lv_obj_set_style_border_width(ch_panel, 1, 0);
+    lv_obj_set_style_pad_all(ch_panel, 0, 0);
+    lv_obj_remove_flag(ch_panel, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *lbl_ch_hdr = lv_label_create(ch_panel);
+    lv_label_set_text(lbl_ch_hdr, "Channel");
+    lv_obj_set_pos(lbl_ch_hdr, 12, 8);
+    lv_obj_set_style_text_color(lbl_ch_hdr, lv_color_hex(0x475569), 0);
+    lv_obj_set_style_text_font(lbl_ch_hdr, &lv_font_montserrat_10, 0);
+
+    // 5 channel items (Ch1=selected, Ch3=warning/no-sample)
+    static const char *const CH_NAMES[]  = { "Ch 1", "Ch 2", "Ch 3", "Ch 5", "Ch 8" };
+    static const char *const CH_AB[]     = { "a=1.80  b=1.35", "a=1.52  b=1.10",
+                                              "Not sampled", "a=0.92  b=0.68", "a=1.24  b=0.94" };
+    static const char *const CH_KS[]     = { "k=1.20 [set]", "k=1.20 [set]",
+                                              "", "k=1.30 [set]", "k=1.20 [set]" };
+    static const int32_t ITEM_Y[]        = { 24, 80, 136, 192, 248 };
+    static const bool    CH_SEL[]        = { true, false, false, false, false };
+    static const bool    CH_WARN[]       = { false, false, true, false, false };
+
+    for (int i = 0; i < 5; i++) {
+        lv_obj_t *item = lv_obj_create(ch_panel);
+        lv_obj_set_pos(item, 0, ITEM_Y[i]);
+        lv_obj_set_size(item, 150, 56);
+        lv_obj_set_style_bg_color(item, CH_SEL[i] ? lv_color_hex(0x1e3a5f) : lv_color_hex(0x111827), 0);
+        lv_obj_set_style_bg_opa(item, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(item, 0, 0);
+        bare_obj(item);
+
+        // 4px accent bar on left edge
+        lv_obj_t *bar = lv_obj_create(item);
+        lv_obj_set_pos(bar, 0, 0);
+        lv_obj_set_size(bar, 4, 56);
+        lv_obj_set_style_bg_color(bar, CH_SEL[i] ? COL_BLUE : COL_SURFACE, 0);
+        lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(bar, 0, 0);
+        bare_obj(bar);
+
+        lv_obj_t *lbl_name = lv_label_create(item);
+        lv_label_set_text(lbl_name, CH_NAMES[i]);
+        lv_obj_set_pos(lbl_name, 16, 8);
+        lv_obj_set_style_text_font(lbl_name, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(lbl_name,
+            CH_SEL[i] ? lv_color_hex(0x93c5fd) : lv_color_hex(0x94a3b8), 0);
+
+        if (CH_AB[i][0]) {
+            lv_obj_t *lbl_ab = lv_label_create(item);
+            lv_label_set_text(lbl_ab, CH_AB[i]);
+            lv_obj_set_pos(lbl_ab, 16, 28);
+            lv_obj_set_style_text_font(lbl_ab, &lv_font_montserrat_10, 0);
+            lv_obj_set_style_text_color(lbl_ab,
+                CH_SEL[i] ? lv_color_hex(0x475569) : lv_color_hex(0x374151), 0);
+        }
+        if (CH_KS[i][0]) {
+            lv_obj_t *lbl_ks = lv_label_create(item);
+            lv_label_set_text(lbl_ks, CH_KS[i]);
+            lv_obj_set_pos(lbl_ks, 16, 40);
+            lv_obj_set_style_text_font(lbl_ks, &lv_font_montserrat_10, 0);
+            lv_obj_set_style_text_color(lbl_ks,
+                CH_SEL[i] ? lv_color_hex(0x475569) : lv_color_hex(0x374151), 0);
+        }
+        if (CH_WARN[i]) {
+            lv_obj_t *warn = lv_obj_create(item);
+            lv_obj_set_pos(warn, 130, 8);
+            lv_obj_set_size(warn, 10, 10);
+            lv_obj_set_style_bg_color(warn, lv_color_hex(0xf59e0b), 0);
+            lv_obj_set_style_bg_opa(warn, LV_OPA_COVER, 0);
+            lv_obj_set_style_radius(warn, LV_RADIUS_CIRCLE, 0);
+            bare_obj(warn);
+        }
+    }
+
+    // ── CENTER: XY plot panel  x=166 y=8 w=280 h=380 ─────────
+    lv_obj_t *plot_panel = lv_obj_create(c);
+    lv_obj_set_pos(plot_panel, 166, 8);
+    lv_obj_set_size(plot_panel, 280, 380);
+    lv_obj_set_style_bg_color(plot_panel, COL_BG, 0);
+    lv_obj_set_style_bg_opa(plot_panel, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(plot_panel, 8, 0);
+    lv_obj_set_style_border_color(plot_panel, COL_SURFACE, 0);
+    lv_obj_set_style_border_width(plot_panel, 1, 0);
+    lv_obj_set_style_pad_all(plot_panel, 0, 0);
+    lv_obj_remove_flag(plot_panel, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Canvas 256x256 at panel inner (12,12)
+    threshold_plot_canvas = lv_canvas_create(plot_panel);
+    lv_canvas_set_buffer(threshold_plot_canvas,
+                         threshold_plot_buf, 256, 256, LV_COLOR_FORMAT_ARGB8888);
+    lv_obj_set_pos(threshold_plot_canvas, 12, 12);
+
+    // Legend: OK dot + label at panel inner y=280
+    lv_obj_t *ok_dot = lv_obj_create(plot_panel);
+    lv_obj_set_pos(ok_dot, 20, 284);
+    lv_obj_set_size(ok_dot, 8, 8);
+    lv_obj_set_style_bg_color(ok_dot, COL_ACCENT_OK, 0);
+    lv_obj_set_style_bg_opa(ok_dot, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(ok_dot, LV_RADIUS_CIRCLE, 0);
+    bare_obj(ok_dot);
+
+    lv_obj_t *lbl_ok_leg = lv_label_create(plot_panel);
+    lv_label_set_text(lbl_ok_leg, "OK samples (7)");
+    lv_obj_set_pos(lbl_ok_leg, 32, 280);
+    lv_obj_set_style_text_font(lbl_ok_leg, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(lbl_ok_leg, lv_color_hex(0x86efac), 0);
+
+    // NG dot + label at y=296
+    lv_obj_t *ng_dot = lv_obj_create(plot_panel);
+    lv_obj_set_pos(ng_dot, 20, 300);
+    lv_obj_set_size(ng_dot, 8, 8);
+    lv_obj_set_style_bg_color(ng_dot, COL_ACCENT_NG, 0);
+    lv_obj_set_style_bg_opa(ng_dot, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(ng_dot, LV_RADIUS_CIRCLE, 0);
+    bare_obj(ng_dot);
+
+    lv_obj_t *lbl_ng_leg = lv_label_create(plot_panel);
+    lv_label_set_text(lbl_ng_leg, "NG samples (5)");
+    lv_obj_set_pos(lbl_ng_leg, 32, 296);
+    lv_obj_set_style_text_font(lbl_ng_leg, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(lbl_ng_leg, lv_color_hex(0xfca5a5), 0);
+
+    // Applied ellipse legend line + label at y=312
+    lv_obj_t *lbl_applied_line = lv_label_create(plot_panel);
+    lv_label_set_text(lbl_applied_line, "---");
+    lv_obj_set_pos(lbl_applied_line, 18, 312);
+    lv_obj_set_style_text_font(lbl_applied_line, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(lbl_applied_line, COL_BLUE, 0);
+
+    lv_obj_t *lbl_applied_leg = lv_label_create(plot_panel);
+    lv_label_set_text(lbl_applied_leg, "Threshold (k=1.20)");
+    lv_obj_set_pos(lbl_applied_leg, 38, 312);
+    lv_obj_set_style_text_font(lbl_applied_leg, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(lbl_applied_leg, lv_color_hex(0x7dd3fc), 0);
+
+    // Fitted ellipse legend at y=326
+    lv_obj_t *lbl_fitted_line = lv_label_create(plot_panel);
+    lv_label_set_text(lbl_fitted_line, "- -");
+    lv_obj_set_pos(lbl_fitted_line, 18, 326);
+    lv_obj_set_style_text_font(lbl_fitted_line, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(lbl_fitted_line, lv_color_hex(0x475569), 0);
+
+    lv_obj_t *lbl_fitted_leg = lv_label_create(plot_panel);
+    lv_label_set_text(lbl_fitted_leg, "Fitted ellipse (raw)");
+    lv_obj_set_pos(lbl_fitted_leg, 38, 326);
+    lv_obj_set_style_text_font(lbl_fitted_leg, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(lbl_fitted_leg, lv_color_hex(0x475569), 0);
+
+    // Plot title (bottom-center of panel)
+    lv_obj_t *lbl_plot_title = lv_label_create(plot_panel);
+    lv_label_set_text(lbl_plot_title, "Ch 1  X-Y Plot");
+    lv_obj_set_style_text_font(lbl_plot_title, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(lbl_plot_title, COL_MUTED, 0);
+    lv_obj_align(lbl_plot_title, LV_ALIGN_BOTTOM_MID, 0, -10);
+
+    // ── RIGHT: Controls panel  x=454 y=8 w=338 h=410 ─────────
+    lv_obj_t *ctrl = lv_obj_create(c);
+    lv_obj_set_pos(ctrl, 454, 8);
+    lv_obj_set_size(ctrl, 338, 410);
+    lv_obj_set_style_bg_color(ctrl, COL_SURFACE, 0);
+    lv_obj_set_style_bg_opa(ctrl, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(ctrl, 8, 0);
+    lv_obj_set_style_border_color(ctrl, COL_BTN_GRAY, 0);
+    lv_obj_set_style_border_width(ctrl, 1, 0);
+    lv_obj_set_style_pad_all(ctrl, 0, 0);
+    lv_obj_remove_flag(ctrl, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Title "Ch 1 - Threshold Params"
+    lv_obj_t *lbl_ctrl_ttl = lv_label_create(ctrl);
+    lv_label_set_text(lbl_ctrl_ttl, "Ch 1  -  Threshold Params");
+    lv_obj_set_pos(lbl_ctrl_ttl, 16, 22);
+    lv_obj_set_style_text_font(lbl_ctrl_ttl, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(lbl_ctrl_ttl, lv_color_hex(0x94a3b8), 0);
+
+    // Sampling section label
+    lv_obj_t *lbl_samp_hdr = lv_label_create(ctrl);
+    lv_label_set_text(lbl_samp_hdr, "Sampling");
+    lv_obj_set_pos(lbl_samp_hdr, 16, 44);
+    lv_obj_set_style_text_font(lbl_samp_hdr, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(lbl_samp_hdr, lv_color_hex(0x64748b), 0);
+
+    // OK Sampling button (16, 50, 148x40)
+    lv_obj_t *btn_ok_samp = lv_obj_create(ctrl);
+    lv_obj_set_pos(btn_ok_samp, 16, 50);
+    lv_obj_set_size(btn_ok_samp, 148, 40);
+    lv_obj_set_style_bg_color(btn_ok_samp, lv_color_hex(0x14532d), 0);
+    lv_obj_set_style_bg_opa(btn_ok_samp, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(btn_ok_samp, 6, 0);
+    lv_obj_set_style_border_color(btn_ok_samp, COL_ACCENT_OK, 0);
+    lv_obj_set_style_border_width(btn_ok_samp, 2, 0);
+    lv_obj_set_style_pad_all(btn_ok_samp, 0, 0);
+    lv_obj_remove_flag(btn_ok_samp, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *lbl_ok_top = lv_label_create(btn_ok_samp);
+    lv_label_set_text(lbl_ok_top, LV_SYMBOL_PLAY "  OK Sampling");
+    lv_obj_set_style_text_font(lbl_ok_top, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(lbl_ok_top, lv_color_hex(0x86efac), 0);
+    lv_obj_set_pos(lbl_ok_top, 8, 6);
+    lv_obj_t *lbl_ok_cnt = lv_label_create(btn_ok_samp);
+    lv_label_set_text(lbl_ok_cnt, "7 registered");
+    lv_obj_set_style_text_font(lbl_ok_cnt, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(lbl_ok_cnt, lv_color_hex(0x4ade80), 0);
+    lv_obj_set_pos(lbl_ok_cnt, 8, 22);
+
+    // NG Sampling button (170, 50, 148x40)
+    lv_obj_t *btn_ng_samp = lv_obj_create(ctrl);
+    lv_obj_set_pos(btn_ng_samp, 170, 50);
+    lv_obj_set_size(btn_ng_samp, 148, 40);
+    lv_obj_set_style_bg_color(btn_ng_samp, lv_color_hex(0x7f1d1d), 0);
+    lv_obj_set_style_bg_opa(btn_ng_samp, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(btn_ng_samp, 6, 0);
+    lv_obj_set_style_border_color(btn_ng_samp, COL_ACCENT_NG, 0);
+    lv_obj_set_style_border_width(btn_ng_samp, 2, 0);
+    lv_obj_set_style_pad_all(btn_ng_samp, 0, 0);
+    lv_obj_remove_flag(btn_ng_samp, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *lbl_ng_top = lv_label_create(btn_ng_samp);
+    lv_label_set_text(lbl_ng_top, LV_SYMBOL_PLAY "  NG Sampling");
+    lv_obj_set_style_text_font(lbl_ng_top, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(lbl_ng_top, lv_color_hex(0xfca5a5), 0);
+    lv_obj_set_pos(lbl_ng_top, 8, 6);
+    lv_obj_t *lbl_ng_cnt = lv_label_create(btn_ng_samp);
+    lv_label_set_text(lbl_ng_cnt, "5 registered");
+    lv_obj_set_style_text_font(lbl_ng_cnt, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(lbl_ng_cnt, lv_color_hex(0xfca5a5), 0);
+    lv_obj_set_pos(lbl_ng_cnt, 8, 22);
+
+    // Divider 1 at y=100
+    {
+        lv_obj_t *d = lv_obj_create(ctrl);
+        lv_obj_set_pos(d, 16, 100); lv_obj_set_size(d, 312, 1);
+        lv_obj_set_style_bg_color(d, COL_BTN_GRAY, 0);
+        lv_obj_set_style_bg_opa(d, LV_OPA_COVER, 0);
+        bare_obj(d);
+    }
+
+    // Fit Result section label at (16, 118)
+    lv_obj_t *lbl_fit_hdr = lv_label_create(ctrl);
+    lv_label_set_text(lbl_fit_hdr, "Fit Result  (auto from samples)");
+    lv_obj_set_pos(lbl_fit_hdr, 16, 118);
+    lv_obj_set_style_text_font(lbl_fit_hdr, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(lbl_fit_hdr, lv_color_hex(0x64748b), 0);
+
+    // a box (16, 126, 148x44)
+    lv_obj_t *box_a = lv_obj_create(ctrl);
+    lv_obj_set_pos(box_a, 16, 126); lv_obj_set_size(box_a, 148, 44);
+    lv_obj_set_style_bg_color(box_a, COL_BG, 0);
+    lv_obj_set_style_bg_opa(box_a, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(box_a, 6, 0);
+    bare_obj(box_a);
+    lv_obj_t *lbl_a_sub = lv_label_create(box_a);
+    lv_label_set_text(lbl_a_sub, "a-axis (major)");
+    lv_obj_set_style_text_font(lbl_a_sub, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(lbl_a_sub, lv_color_hex(0x475569), 0);
+    lv_obj_align(lbl_a_sub, LV_ALIGN_TOP_MID, 0, 6);
+    lv_obj_t *lbl_a_val = lv_label_create(box_a);
+    lv_label_set_text(lbl_a_val, "1.500 V");
+    lv_obj_set_style_text_font(lbl_a_val, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(lbl_a_val, lv_color_hex(0x94a3b8), 0);
+    lv_obj_align(lbl_a_val, LV_ALIGN_BOTTOM_MID, 0, -4);
+
+    // b box (170, 126, 148x44)
+    lv_obj_t *box_b = lv_obj_create(ctrl);
+    lv_obj_set_pos(box_b, 170, 126); lv_obj_set_size(box_b, 148, 44);
+    lv_obj_set_style_bg_color(box_b, COL_BG, 0);
+    lv_obj_set_style_bg_opa(box_b, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(box_b, 6, 0);
+    bare_obj(box_b);
+    lv_obj_t *lbl_b_sub = lv_label_create(box_b);
+    lv_label_set_text(lbl_b_sub, "b-axis (minor)");
+    lv_obj_set_style_text_font(lbl_b_sub, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(lbl_b_sub, lv_color_hex(0x475569), 0);
+    lv_obj_align(lbl_b_sub, LV_ALIGN_TOP_MID, 0, 6);
+    lv_obj_t *lbl_b_val = lv_label_create(box_b);
+    lv_label_set_text(lbl_b_val, "1.125 V");
+    lv_obj_set_style_text_font(lbl_b_val, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(lbl_b_val, lv_color_hex(0x94a3b8), 0);
+    lv_obj_align(lbl_b_val, LV_ALIGN_BOTTOM_MID, 0, -4);
+
+    // Divider 2 at y=180
+    {
+        lv_obj_t *d = lv_obj_create(ctrl);
+        lv_obj_set_pos(d, 16, 180); lv_obj_set_size(d, 312, 1);
+        lv_obj_set_style_bg_color(d, COL_BTN_GRAY, 0);
+        lv_obj_set_style_bg_opa(d, LV_OPA_COVER, 0);
+        bare_obj(d);
+    }
+
+    // Scale factor k section label at (16, 198)
+    lv_obj_t *lbl_k_hdr = lv_label_create(ctrl);
+    lv_label_set_text(lbl_k_hdr, "Scale factor  k");
+    lv_obj_set_pos(lbl_k_hdr, 16, 198);
+    lv_obj_set_style_text_font(lbl_k_hdr, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(lbl_k_hdr, lv_color_hex(0x64748b), 0);
+
+    // k value container (16, 206, 312x56)
+    lv_obj_t *k_box = lv_obj_create(ctrl);
+    lv_obj_set_pos(k_box, 16, 206); lv_obj_set_size(k_box, 312, 56);
+    lv_obj_set_style_bg_color(k_box, COL_BG, 0);
+    lv_obj_set_style_bg_opa(k_box, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(k_box, 6, 0);
+    bare_obj(k_box);
+
+    lv_obj_t *btn_k_minus = lv_btn_create(k_box);
+    lv_obj_set_pos(btn_k_minus, 8, 8); lv_obj_set_size(btn_k_minus, 40, 40);
+    lv_obj_set_style_bg_color(btn_k_minus, lv_color_hex(0x1e3a5f), 0);
+    lv_obj_set_style_border_color(btn_k_minus, lv_color_hex(0x1d4ed8), 0);
+    lv_obj_set_style_border_width(btn_k_minus, 1, 0);
+    lv_obj_set_style_radius(btn_k_minus, 6, 0);
+    lv_obj_set_style_pad_all(btn_k_minus, 0, 0);
+    lv_obj_t *lbl_k_minus = lv_label_create(btn_k_minus);
+    lv_label_set_text(lbl_k_minus, "-");
+    lv_obj_set_style_text_font(lbl_k_minus, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_color(lbl_k_minus, lv_color_hex(0x93c5fd), 0);
+    lv_obj_center(lbl_k_minus);
+
+    lv_obj_t *lbl_k_val = lv_label_create(k_box);
+    lv_label_set_text(lbl_k_val, "1.20");
+    lv_obj_set_style_text_font(lbl_k_val, &lv_font_montserrat_26, 0);
+    lv_obj_set_style_text_color(lbl_k_val, COL_BLUE, 0);
+    lv_obj_align(lbl_k_val, LV_ALIGN_CENTER, 0, -4);
+
+    lv_obj_t *lbl_k_sub = lv_label_create(k_box);
+    lv_label_set_text(lbl_k_sub, "x fit ellipse");
+    lv_obj_set_style_text_font(lbl_k_sub, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(lbl_k_sub, lv_color_hex(0x475569), 0);
+    lv_obj_align(lbl_k_sub, LV_ALIGN_BOTTOM_MID, 0, -2);
+
+    lv_obj_t *btn_k_plus = lv_btn_create(k_box);
+    lv_obj_set_pos(btn_k_plus, 264, 8); lv_obj_set_size(btn_k_plus, 40, 40);
+    lv_obj_set_style_bg_color(btn_k_plus, lv_color_hex(0x1e3a5f), 0);
+    lv_obj_set_style_border_color(btn_k_plus, lv_color_hex(0x1d4ed8), 0);
+    lv_obj_set_style_border_width(btn_k_plus, 1, 0);
+    lv_obj_set_style_radius(btn_k_plus, 6, 0);
+    lv_obj_set_style_pad_all(btn_k_plus, 0, 0);
+    lv_obj_t *lbl_k_plus = lv_label_create(btn_k_plus);
+    lv_label_set_text(lbl_k_plus, "+");
+    lv_obj_set_style_text_font(lbl_k_plus, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_color(lbl_k_plus, lv_color_hex(0x93c5fd), 0);
+    lv_obj_center(lbl_k_plus);
+
+    // k slider track at (16, 274, 312x6)
+    lv_obj_t *sl_track = lv_obj_create(ctrl);
+    lv_obj_set_pos(sl_track, 16, 274); lv_obj_set_size(sl_track, 312, 6);
+    lv_obj_set_style_bg_color(sl_track, COL_BG, 0);
+    lv_obj_set_style_bg_opa(sl_track, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(sl_track, 3, 0);
+    bare_obj(sl_track);
+
+    // k filled portion: k=1.20 → (1.20-0.5)/(3.0-0.5)*312 = 87px
+    lv_obj_t *sl_fill = lv_obj_create(ctrl);
+    lv_obj_set_pos(sl_fill, 16, 274); lv_obj_set_size(sl_fill, 87, 6);
+    lv_obj_set_style_bg_color(sl_fill, COL_BLUE, 0);
+    lv_obj_set_style_bg_opa(sl_fill, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(sl_fill, 3, 0);
+    bare_obj(sl_fill);
+
+    // Slider knob: center at (16+87=103, 277), r=9
+    lv_obj_t *sl_knob = lv_obj_create(ctrl);
+    lv_obj_set_pos(sl_knob, 94, 268); lv_obj_set_size(sl_knob, 18, 18);
+    lv_obj_set_style_bg_color(sl_knob, COL_BLUE, 0);
+    lv_obj_set_style_bg_opa(sl_knob, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(sl_knob, LV_RADIUS_CIRCLE, 0);
+    bare_obj(sl_knob);
+
+    // Slider min/max labels at y=284
+    lv_obj_t *lbl_k_min = lv_label_create(ctrl);
+    lv_label_set_text(lbl_k_min, "0.5");
+    lv_obj_set_pos(lbl_k_min, 16, 284);
+    lv_obj_set_style_text_font(lbl_k_min, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(lbl_k_min, lv_color_hex(0x475569), 0);
+
+    lv_obj_t *lbl_k_max = lv_label_create(ctrl);
+    lv_label_set_text(lbl_k_max, "3.0");
+    lv_obj_set_pos(lbl_k_max, 312, 284);
+    lv_obj_set_style_text_font(lbl_k_max, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(lbl_k_max, lv_color_hex(0x475569), 0);
+
+    // Step selector label at (16, 314)
+    lv_obj_t *lbl_step_hdr = lv_label_create(ctrl);
+    lv_label_set_text(lbl_step_hdr, "Step");
+    lv_obj_set_pos(lbl_step_hdr, 16, 314);
+    lv_obj_set_style_text_font(lbl_step_hdr, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(lbl_step_hdr, lv_color_hex(0x64748b), 0);
+
+    // Step buttons at y=320: 0.01 / 0.05(selected) / 0.10
+    static const char *const STEP_VALS[] = { "0.01", "0.05", "0.10" };
+    static const bool STEP_SEL[] = { false, true, false };
+    static const int32_t STEP_X[] = { 16, 69, 122 };
+    for (int i = 0; i < 3; i++) {
+        lv_obj_t *sb = lv_obj_create(ctrl);
+        lv_obj_set_pos(sb, STEP_X[i], 320); lv_obj_set_size(sb, 48, 22);
+        lv_obj_set_style_bg_color(sb, STEP_SEL[i] ? lv_color_hex(0x1e3a5f) : COL_BG, 0);
+        lv_obj_set_style_bg_opa(sb, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(sb, 4, 0);
+        lv_obj_set_style_border_color(sb, STEP_SEL[i] ? lv_color_hex(0x1d4ed8) : COL_BTN_GRAY, 0);
+        lv_obj_set_style_border_width(sb, 1, 0);
+        lv_obj_set_style_pad_all(sb, 0, 0);
+        lv_obj_remove_flag(sb, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_t *lbl_s = lv_label_create(sb);
+        lv_label_set_text(lbl_s, STEP_VALS[i]);
+        lv_obj_set_style_text_font(lbl_s, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_color(lbl_s,
+            STEP_SEL[i] ? lv_color_hex(0x93c5fd) : lv_color_hex(0x94a3b8), 0);
+        lv_obj_center(lbl_s);
+    }
+
+    // Divider 3 at y=352
+    {
+        lv_obj_t *d = lv_obj_create(ctrl);
+        lv_obj_set_pos(d, 16, 352); lv_obj_set_size(d, 312, 1);
+        lv_obj_set_style_bg_color(d, COL_BTN_GRAY, 0);
+        lv_obj_set_style_bg_opa(d, LV_OPA_COVER, 0);
+        bare_obj(d);
+    }
+
+    // Applied threshold label at (16, 368)
+    lv_obj_t *lbl_app_hdr = lv_label_create(ctrl);
+    lv_label_set_text(lbl_app_hdr, "Applied threshold");
+    lv_obj_set_pos(lbl_app_hdr, 16, 368);
+    lv_obj_set_style_text_font(lbl_app_hdr, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(lbl_app_hdr, lv_color_hex(0x64748b), 0);
+
+    // a applied value (left half, center-text)
+    lv_obj_t *lbl_a_app = lv_label_create(ctrl);
+    lv_label_set_text(lbl_a_app, "a = 1.800 V");
+    lv_obj_set_pos(lbl_a_app, 16, 384);
+    lv_obj_set_size(lbl_a_app, 148, 20);
+    lv_obj_set_style_text_font(lbl_a_app, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl_a_app, COL_BLUE, 0);
+    lv_obj_set_style_text_align(lbl_a_app, LV_TEXT_ALIGN_CENTER, 0);
+
+    // b applied value (right half, center-text)
+    lv_obj_t *lbl_b_app = lv_label_create(ctrl);
+    lv_label_set_text(lbl_b_app, "b = 1.350 V");
+    lv_obj_set_pos(lbl_b_app, 170, 384);
+    lv_obj_set_size(lbl_b_app, 148, 20);
+    lv_obj_set_style_text_font(lbl_b_app, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl_b_app, COL_BLUE, 0);
+    lv_obj_set_style_text_align(lbl_b_app, LV_TEXT_ALIGN_CENTER, 0);
+
+    // ── BOTTOM BUTTONS  y=388 h=30 ────────────────────────────
+    // Cancel (8, 388, 148x30)
+    lv_obj_t *btn_cancel = lv_btn_create(c);
+    lv_obj_set_size(btn_cancel, 148, 30);
+    lv_obj_set_pos(btn_cancel, 8, 388);
+    lv_obj_set_style_bg_color(btn_cancel, COL_SURFACE, 0);
+    lv_obj_set_style_bg_opa(btn_cancel, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(btn_cancel, 6, 0);
+    lv_obj_set_style_border_color(btn_cancel, COL_BTN_GRAY, 0);
+    lv_obj_set_style_border_width(btn_cancel, 1, 0);
+    lv_obj_set_style_pad_all(btn_cancel, 0, 0);
+    lv_obj_add_event_cb(btn_cancel, btn_back_to_settings_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *lbl_cancel = lv_label_create(btn_cancel);
+    lv_label_set_text(lbl_cancel, "Cancel");
+    lv_obj_set_style_text_color(lbl_cancel, lv_color_hex(0x94a3b8), 0);
+    lv_obj_set_style_text_font(lbl_cancel, &lv_font_montserrat_12, 0);
+    lv_obj_center(lbl_cancel);
+
+    // Copy to all Ch (166, 388, 126x30)
+    lv_obj_t *btn_copy = lv_btn_create(c);
+    lv_obj_set_size(btn_copy, 126, 30);
+    lv_obj_set_pos(btn_copy, 166, 388);
+    lv_obj_set_style_bg_color(btn_copy, COL_SURFACE, 0);
+    lv_obj_set_style_bg_opa(btn_copy, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(btn_copy, 6, 0);
+    lv_obj_set_style_border_color(btn_copy, COL_BTN_GRAY, 0);
+    lv_obj_set_style_border_width(btn_copy, 1, 0);
+    lv_obj_set_style_pad_all(btn_copy, 0, 0);
+    lv_obj_t *lbl_copy = lv_label_create(btn_copy);
+    lv_label_set_text(lbl_copy, "Copy to all Ch");
+    lv_obj_set_style_text_color(lbl_copy, lv_color_hex(0x64748b), 0);
+    lv_obj_set_style_text_font(lbl_copy, &lv_font_montserrat_10, 0);
+    lv_obj_center(lbl_copy);
+
+    // Apply (644, 388, 148x30) — green
+    lv_obj_t *btn_apply = lv_btn_create(c);
+    lv_obj_set_size(btn_apply, 148, 30);
+    lv_obj_set_pos(btn_apply, 644, 388);
+    lv_obj_set_style_bg_color(btn_apply, lv_color_hex(0x0f6e56), 0);
+    lv_obj_set_style_bg_opa(btn_apply, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(btn_apply, 6, 0);
+    lv_obj_set_style_border_width(btn_apply, 0, 0);
+    lv_obj_set_style_pad_all(btn_apply, 0, 0);
+    lv_obj_t *lbl_apply = lv_label_create(btn_apply);
+    lv_label_set_text(lbl_apply, "Apply");
+    lv_obj_set_style_text_color(lbl_apply, COL_WHITE, 0);
+    lv_obj_set_style_text_font(lbl_apply, &lv_font_montserrat_12, 0);
+    lv_obj_center(lbl_apply);
+
+    // One-shot timer to draw canvas after init completes
+    lv_timer_t *plot_timer = lv_timer_create(draw_threshold_plot, 50, NULL);
+    lv_timer_set_repeat_count(plot_timer, 1);
 }
 
 static void create_scr_history(void)
