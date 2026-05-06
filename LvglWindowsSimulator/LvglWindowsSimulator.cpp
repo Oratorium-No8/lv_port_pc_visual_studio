@@ -2486,28 +2486,787 @@ static void create_scr_history(void)
     lv_timer_set_repeat_count(plot_timer, 1);
 }
 
+// ============================================================
+//  scr_correction  補正値管理
+// ============================================================
 static void create_scr_correction(void)
 {
     lv_obj_t *c = make_settings_subscr(&scr_correction, "Correction");
-    lv_obj_t *ph = lv_label_create(c);
-    lv_label_set_text(ph, "Correction\n(Correction coeff.)");
-    lv_obj_set_style_text_color(ph, COL_MUTED, 0);
-    lv_obj_set_style_text_font(ph, &lv_font_montserrat_16, 0);
-    lv_label_set_long_mode(ph, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(ph, 400);
-    lv_obj_center(ph);
+    /* content_y = SVG_y - 44 */
+
+    /* ── Recommendation banner  content(8,8,784,64) ─────────── */
+    lv_obj_t *banner = lv_obj_create(c);
+    lv_obj_set_pos(banner, 8, 8);
+    lv_obj_set_size(banner, 784, 64);
+    lv_obj_set_style_bg_color(banner, lv_color_hex(0x1c1400), 0);
+    lv_obj_set_style_bg_opa(banner, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(banner, lv_color_hex(0xf59e0b), 0);
+    lv_obj_set_style_border_width(banner, 1, 0);
+    lv_obj_set_style_radius(banner, 6, 0);
+    lv_obj_set_style_pad_all(banner, 0, 0);
+    lv_obj_remove_flag(banner, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* left amber accent bar 5px */
+    lv_obj_t *banner_bar = lv_obj_create(banner);
+    lv_obj_set_pos(banner_bar, 0, 0);
+    lv_obj_set_size(banner_bar, 5, 64);
+    lv_obj_set_style_bg_color(banner_bar, lv_color_hex(0xf59e0b), 0);
+    lv_obj_set_style_bg_opa(banner_bar, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(banner_bar, 0, 0);
+    lv_obj_set_style_border_width(banner_bar, 0, 0);
+    lv_obj_set_style_pad_all(banner_bar, 0, 0);
+    lv_obj_remove_flag(banner_bar, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* ML icon area (circle symbol) */
+    lv_obj_t *ml_icon = lv_label_create(banner);
+    lv_label_set_text(ml_icon, LV_SYMBOL_REFRESH);
+    lv_obj_set_pos(ml_icon, 18, 10);
+    lv_obj_set_style_text_color(ml_icon, lv_color_hex(0xf59e0b), 0);
+    lv_obj_set_style_text_font(ml_icon, &lv_font_montserrat_20, 0);
+
+    /* Banner title */
+    lv_obj_t *banner_title = lv_label_create(banner);
+    lv_label_set_text(banner_title, "ML Correction Proposal");
+    lv_obj_set_pos(banner_title, 44, 10);
+    lv_obj_set_style_text_color(banner_title, lv_color_hex(0xfbbf24), 0);
+    lv_obj_set_style_text_font(banner_title, &lv_font_montserrat_14, 0);
+
+    /* Banner description */
+    lv_obj_t *banner_desc = lv_label_create(banner);
+    lv_label_set_text(banner_desc, "3 channels have updated correction proposals based on recent measurement data.");
+    lv_obj_set_pos(banner_desc, 44, 30);
+    lv_obj_set_style_text_color(banner_desc, lv_color_hex(0x92400e), 0);
+    lv_obj_set_style_text_font(banner_desc, &lv_font_montserrat_10, 0);
+
+    /* Approve button  content(620,18,80,30) */
+    lv_obj_t *btn_approve = lv_btn_create(banner);
+    lv_obj_set_pos(btn_approve, 612, 17);
+    lv_obj_set_size(btn_approve, 80, 30);
+    lv_obj_set_style_bg_color(btn_approve, lv_color_hex(0x166534), 0);
+    lv_obj_set_style_bg_opa(btn_approve, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(btn_approve, lv_color_hex(0x22c55e), 0);
+    lv_obj_set_style_border_width(btn_approve, 1, 0);
+    lv_obj_set_style_radius(btn_approve, 4, 0);
+    lv_obj_set_style_pad_all(btn_approve, 0, 0);
+    lv_obj_t *lbl_approve = lv_label_create(btn_approve);
+    lv_label_set_text(lbl_approve, "Approve");
+    lv_obj_center(lbl_approve);
+    lv_obj_set_style_text_color(lbl_approve, lv_color_hex(0x86efac), 0);
+    lv_obj_set_style_text_font(lbl_approve, &lv_font_montserrat_12, 0);
+
+    /* Reject button  content(700,18,76,30) */
+    lv_obj_t *btn_reject = lv_btn_create(banner);
+    lv_obj_set_pos(btn_reject, 700, 17);
+    lv_obj_set_size(btn_reject, 76, 30);
+    lv_obj_set_style_bg_color(btn_reject, lv_color_hex(0x1c0505), 0);
+    lv_obj_set_style_bg_opa(btn_reject, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(btn_reject, lv_color_hex(0xef4444), 0);
+    lv_obj_set_style_border_width(btn_reject, 1, 0);
+    lv_obj_set_style_radius(btn_reject, 4, 0);
+    lv_obj_set_style_pad_all(btn_reject, 0, 0);
+    lv_obj_t *lbl_reject = lv_label_create(btn_reject);
+    lv_label_set_text(lbl_reject, "Reject");
+    lv_obj_center(lbl_reject);
+    lv_obj_set_style_text_color(lbl_reject, lv_color_hex(0xfca5a5), 0);
+    lv_obj_set_style_text_font(lbl_reject, &lv_font_montserrat_12, 0);
+
+    /* ── Table container  content(0,80,800,356) ──────────────── */
+    /* content_y=80 = SVG_y(124) - 44 */
+
+    /* Table header row  content(0,80,800,24) */
+    lv_obj_t *tbl_hdr = lv_obj_create(c);
+    lv_obj_set_pos(tbl_hdr, 0, 80);
+    lv_obj_set_size(tbl_hdr, 800, 24);
+    lv_obj_set_style_bg_color(tbl_hdr, lv_color_hex(0x1e293b), 0);
+    lv_obj_set_style_bg_opa(tbl_hdr, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(tbl_hdr, 0, 0);
+    lv_obj_set_style_border_width(tbl_hdr, 0, 0);
+    lv_obj_set_style_border_side(tbl_hdr, LV_BORDER_SIDE_BOTTOM, 0);
+    lv_obj_set_style_border_color(tbl_hdr, lv_color_hex(0x334155), 0);
+    lv_obj_set_style_border_width(tbl_hdr, 1, 0);
+    lv_obj_set_style_pad_all(tbl_hdr, 0, 0);
+    lv_obj_remove_flag(tbl_hdr, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* Header labels at column centers (x relative to content/tbl_hdr):
+       Ch=36, Enabled=96, Coeff=184, Proposed=316, Last Date=430, Reason=560, Count=716 */
+    static const char *hdr_texts[] = { "Ch", "Enabled", "Current Coeff.", "Proposed", "Last Applied", "Reason", "Apply Count" };
+    static const int32_t hdr_cx[]  = { 36, 96, 184, 316, 430, 560, 716 };
+    for (int i = 0; i < 7; i++) {
+        lv_obj_t *h = lv_label_create(tbl_hdr);
+        lv_label_set_text(h, hdr_texts[i]);
+        lv_obj_set_style_text_color(h, lv_color_hex(0x94a3b8), 0);
+        lv_obj_set_style_text_font(h, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_align(h, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_width(h, 80);
+        lv_obj_set_pos(h, hdr_cx[i] - 40, 7);
+    }
+
+    /* Row data */
+    typedef struct {
+        int     ch;
+        bool    active;
+        bool    proposed;
+        bool    neg_delta;  /* true = red delta */
+        const char *coeff;
+        const char *prop_val;
+        const char *delta;
+        const char *date;
+        const char *reason;
+        int     count;
+    } CorrRow;
+
+    static const CorrRow rows[16] = {
+        {  1, true,  false, false, "1.0240", "—",      "",         "2026-03-15", "自動学習", 4 },
+        {  2, true,  false, false, "0.9870", "—",      "",         "2026-02-28", "自動学習", 3 },
+        {  3, true,  true,  false, "1.1520", "1.1840", "▲+0.032", "2025-11-10", "自動学習", 7 },
+        {  4, false, false, false, "—",      "—",      "",         "未設定",     "未使用Ch", 0 },
+        {  5, true,  false, false, "1.0050", "—",      "",         "2026-04-01", "自動学習", 5 },
+        {  6, false, false, false, "—",      "—",      "",         "未設定",     "未使用Ch", 0 },
+        {  7, false, false, false, "—",      "—",      "",         "未設定",     "未使用Ch", 0 },
+        {  8, true,  true,  true,  "0.9640", "0.9520", "▼-0.012", "2026-01-22", "手動入力", 2 },
+        {  9, false, false, false, "—",      "—",      "",         "未設定",     "未使用Ch", 0 },
+        { 10, false, false, false, "—",      "—",      "",         "未設定",     "未使用Ch", 0 },
+        { 11, false, false, false, "—",      "—",      "",         "未設定",     "未使用Ch", 0 },
+        { 12, true,  true,  false, "1.0780", "1.0960", "▲+0.018", "2026-02-10", "自動学習", 6 },
+        { 13, false, false, false, "—",      "—",      "",         "未設定",     "未使用Ch", 0 },
+        { 14, false, false, false, "—",      "—",      "",         "未設定",     "未使用Ch", 0 },
+        { 15, false, false, false, "—",      "—",      "",         "未設定",     "未使用Ch", 0 },
+        { 16, false, false, false, "—",      "—",      "",         "未設定",     "未使用Ch", 0 },
+    };
+
+    /* Col x positions for data cells (center) */
+    static const int32_t col_cx[] = { 36, 96, 184, 316, 430, 560, 716 };
+
+    for (int i = 0; i < 16; i++) {
+        const CorrRow *r = &rows[i];
+        int32_t ry = 80 + 24 + i * 20;  /* content_y for this row */
+        int32_t rh = 20;
+
+        lv_obj_t *row = lv_obj_create(c);
+        lv_obj_set_pos(row, 0, ry);
+        lv_obj_set_size(row, 800, rh);
+
+        lv_color_t row_bg;
+        if (r->proposed) {
+            row_bg = lv_color_hex(0x1c1917);
+        } else if (i % 2 == 0) {
+            row_bg = lv_color_hex(0x0f172a);
+        } else {
+            row_bg = lv_color_hex(0x111827);
+        }
+        lv_obj_set_style_bg_color(row, row_bg, 0);
+        lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(row, 0, 0);
+        lv_obj_set_style_border_width(row, 0, 0);
+        lv_obj_set_style_border_side(row, LV_BORDER_SIDE_BOTTOM, 0);
+        lv_obj_set_style_border_color(row, lv_color_hex(0x1e293b), 0);
+        lv_obj_set_style_border_width(row, 1, 0);
+        lv_obj_set_style_pad_all(row, 0, 0);
+        lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+
+        /* Amber left accent bar for proposed rows */
+        if (r->proposed) {
+            lv_obj_t *acc = lv_obj_create(row);
+            lv_obj_set_pos(acc, 0, 0);
+            lv_obj_set_size(acc, 3, rh);
+            lv_obj_set_style_bg_color(acc, lv_color_hex(0xf59e0b), 0);
+            lv_obj_set_style_bg_opa(acc, LV_OPA_COVER, 0);
+            lv_obj_set_style_radius(acc, 0, 0);
+            lv_obj_set_style_border_width(acc, 0, 0);
+            lv_obj_set_style_pad_all(acc, 0, 0);
+            lv_obj_remove_flag(acc, LV_OBJ_FLAG_SCROLLABLE);
+        }
+
+        /* Col 0: Ch number */
+        {
+            char ch_str[4];
+            lv_snprintf(ch_str, sizeof(ch_str), "%d", r->ch);
+            lv_obj_t *lbl = lv_label_create(row);
+            lv_label_set_text(lbl, ch_str);
+            lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+            lv_color_t ch_col = r->proposed ? lv_color_hex(0xf59e0b) :
+                                (r->active  ? COL_WHITE : COL_MUTED);
+            lv_obj_set_style_text_color(lbl, ch_col, 0);
+            lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
+            lv_obj_set_width(lbl, 50);
+            lv_obj_set_pos(lbl, col_cx[0] - 25, 5);
+        }
+
+        /* Col 1: Status dot + Enabled/Disabled */
+        {
+            lv_obj_t *dot = lv_obj_create(row);
+            lv_obj_set_size(dot, 6, 6);
+            lv_obj_set_pos(dot, col_cx[1] - 20, 7);
+            lv_obj_set_style_bg_color(dot, r->active ? lv_color_hex(0x22c55e) : lv_color_hex(0x374151), 0);
+            lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
+            lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
+            lv_obj_set_style_border_width(dot, 0, 0);
+            lv_obj_set_style_pad_all(dot, 0, 0);
+            lv_obj_remove_flag(dot, LV_OBJ_FLAG_SCROLLABLE);
+
+            lv_obj_t *lbl = lv_label_create(row);
+            lv_label_set_text(lbl, r->active ? "ON" : "OFF");
+            lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+            lv_obj_set_style_text_color(lbl, r->active ? lv_color_hex(0x22c55e) : lv_color_hex(0x374151), 0);
+            lv_obj_set_pos(lbl, col_cx[1] - 10, 5);
+        }
+
+        /* Col 2: Current coeff */
+        {
+            lv_obj_t *lbl = lv_label_create(row);
+            lv_label_set_text(lbl, r->coeff);
+            lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+            lv_obj_set_style_text_color(lbl, r->active ? COL_WHITE : COL_MUTED, 0);
+            lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
+            lv_obj_set_width(lbl, 80);
+            lv_obj_set_pos(lbl, col_cx[2] - 40, 5);
+        }
+
+        /* Col 3: Proposed value + delta */
+        {
+            lv_obj_t *lbl = lv_label_create(row);
+            if (r->proposed) {
+                char buf[32];
+                lv_snprintf(buf, sizeof(buf), "%s  %s", r->prop_val, r->delta);
+                lv_label_set_text(lbl, buf);
+                lv_obj_set_style_text_color(lbl, r->neg_delta ? lv_color_hex(0xef4444) : lv_color_hex(0x86efac), 0);
+            } else {
+                lv_label_set_text(lbl, r->prop_val);
+                lv_obj_set_style_text_color(lbl, COL_MUTED, 0);
+            }
+            lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+            lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
+            lv_obj_set_width(lbl, 120);
+            lv_obj_set_pos(lbl, col_cx[3] - 60, 5);
+        }
+
+        /* Col 4: Last applied date */
+        {
+            lv_obj_t *lbl = lv_label_create(row);
+            lv_label_set_text(lbl, r->date);
+            lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+            lv_obj_set_style_text_color(lbl, r->active ? lv_color_hex(0x94a3b8) : COL_MUTED, 0);
+            lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
+            lv_obj_set_width(lbl, 120);
+            lv_obj_set_pos(lbl, col_cx[4] - 60, 5);
+        }
+
+        /* Col 5: Reason */
+        {
+            lv_obj_t *lbl = lv_label_create(row);
+            lv_label_set_text(lbl, r->reason);
+            lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+            lv_obj_set_style_text_color(lbl, r->active ? lv_color_hex(0x94a3b8) : COL_MUTED, 0);
+            lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
+            lv_obj_set_width(lbl, 160);
+            lv_obj_set_pos(lbl, col_cx[5] - 80, 5);
+        }
+
+        /* Col 6: Apply count */
+        {
+            char cnt_str[8];
+            lv_snprintf(cnt_str, sizeof(cnt_str), "%d", r->count);
+            lv_obj_t *lbl = lv_label_create(row);
+            lv_label_set_text(lbl, cnt_str);
+            lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+            lv_obj_set_style_text_color(lbl, r->active ? COL_WHITE : COL_MUTED, 0);
+            lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
+            lv_obj_set_width(lbl, 80);
+            lv_obj_set_pos(lbl, col_cx[6] - 40, 5);
+        }
+    }
+
+    /* Column separator lines */
+    static const int32_t sep_xs[] = { 64, 128, 248, 376, 492, 632 };
+    for (int i = 0; i < 6; i++) {
+        lv_obj_t *sep = lv_obj_create(c);
+        lv_obj_set_pos(sep, sep_xs[i], 80);
+        lv_obj_set_size(sep, 1, 24 + 16 * 20);
+        lv_obj_set_style_bg_color(sep, lv_color_hex(0x1e293b), 0);
+        lv_obj_set_style_bg_opa(sep, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(sep, 0, 0);
+        lv_obj_set_style_border_width(sep, 0, 0);
+        lv_obj_set_style_pad_all(sep, 0, 0);
+        lv_obj_remove_flag(sep, LV_OBJ_FLAG_SCROLLABLE);
+    }
 }
 
+// ============================================================
+//  scr_detail  詳細設定 (Language / Date+Time / I/O Test)
+// ============================================================
 static void create_scr_detail(void)
 {
     lv_obj_t *c = make_settings_subscr(&scr_detail, "Detail Settings");
-    lv_obj_t *ph = lv_label_create(c);
-    lv_label_set_text(ph, "Detail Settings\n(Language / Clock / I/O)");
-    lv_obj_set_style_text_color(ph, COL_MUTED, 0);
-    lv_obj_set_style_text_font(ph, &lv_font_montserrat_16, 0);
-    lv_label_set_long_mode(ph, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(ph, 400);
-    lv_obj_center(ph);
+    /* content_y = SVG_y - 44  /  right panel inner_x = SVG_x - 196 */
+
+    /* ── Left nav panel  content(8,8,180,410) ───────────────── */
+    lv_obj_t *nav = lv_obj_create(c);
+    lv_obj_set_pos(nav, 8, 8);
+    lv_obj_set_size(nav, 180, 410);
+    lv_obj_set_style_bg_color(nav, COL_BG, 0);
+    lv_obj_set_style_bg_opa(nav, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(nav, COL_SURFACE, 0);
+    lv_obj_set_style_border_width(nav, 1, 0);
+    lv_obj_set_style_radius(nav, 6, 0);
+    lv_obj_set_style_pad_all(nav, 0, 0);
+    lv_obj_remove_flag(nav, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* -- Language item (active, blue)  nav(0,0,180,52) -- */
+    lv_obj_t *nav_lang = lv_obj_create(nav);
+    lv_obj_set_pos(nav_lang, 0, 0);
+    lv_obj_set_size(nav_lang, 180, 52);
+    lv_obj_set_style_bg_color(nav_lang, lv_color_hex(0x1e3a5f), 0);
+    lv_obj_set_style_bg_opa(nav_lang, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(nav_lang, 0, 0);
+    lv_obj_set_style_border_width(nav_lang, 0, 0);
+    lv_obj_set_style_pad_all(nav_lang, 0, 0);
+    lv_obj_remove_flag(nav_lang, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* 4px blue accent bar */
+    lv_obj_t *lang_bar = lv_obj_create(nav_lang);
+    lv_obj_set_pos(lang_bar, 0, 0);
+    lv_obj_set_size(lang_bar, 4, 52);
+    lv_obj_set_style_bg_color(lang_bar, COL_BLUE, 0);
+    lv_obj_set_style_bg_opa(lang_bar, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(lang_bar, 0, 0);
+    lv_obj_set_style_border_width(lang_bar, 0, 0);
+    lv_obj_set_style_pad_all(lang_bar, 0, 0);
+    lv_obj_remove_flag(lang_bar, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* Globe icon (LV_SYMBOL_AUDIO as placeholder) */
+    lv_obj_t *lang_icon = lv_label_create(nav_lang);
+    lv_label_set_text(lang_icon, LV_SYMBOL_AUDIO);
+    lv_obj_set_pos(lang_icon, 14, 12);
+    lv_obj_set_style_text_color(lang_icon, COL_BLUE, 0);
+    lv_obj_set_style_text_font(lang_icon, &lv_font_montserrat_16, 0);
+
+    lv_obj_t *lang_title = lv_label_create(nav_lang);
+    lv_label_set_text(lang_title, "Language");
+    lv_obj_set_pos(lang_title, 40, 10);
+    lv_obj_set_style_text_color(lang_title, lv_color_hex(0x93c5fd), 0);
+    lv_obj_set_style_text_font(lang_title, &lv_font_montserrat_12, 0);
+
+    lv_obj_t *lang_sub = lv_label_create(nav_lang);
+    lv_label_set_text(lang_sub, "Japanese");
+    lv_obj_set_pos(lang_sub, 40, 28);
+    lv_obj_set_style_text_color(lang_sub, COL_MUTED, 0);
+    lv_obj_set_style_text_font(lang_sub, &lv_font_montserrat_10, 0);
+
+    /* -- Date/Time item  nav(0,56,180,52) -- */
+    lv_obj_t *nav_dt = lv_obj_create(nav);
+    lv_obj_set_pos(nav_dt, 0, 56);
+    lv_obj_set_size(nav_dt, 180, 52);
+    lv_obj_set_style_bg_color(nav_dt, lv_color_hex(0x111827), 0);
+    lv_obj_set_style_bg_opa(nav_dt, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(nav_dt, 0, 0);
+    lv_obj_set_style_border_width(nav_dt, 0, 0);
+    lv_obj_set_style_pad_all(nav_dt, 0, 0);
+    lv_obj_remove_flag(nav_dt, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *dt_icon = lv_label_create(nav_dt);
+    lv_label_set_text(dt_icon, LV_SYMBOL_SETTINGS);
+    lv_obj_set_pos(dt_icon, 14, 12);
+    lv_obj_set_style_text_color(dt_icon, lv_color_hex(0x94a3b8), 0);
+    lv_obj_set_style_text_font(dt_icon, &lv_font_montserrat_16, 0);
+
+    lv_obj_t *dt_title = lv_label_create(nav_dt);
+    lv_label_set_text(dt_title, "Date/Time");
+    lv_obj_set_pos(dt_title, 40, 10);
+    lv_obj_set_style_text_color(dt_title, lv_color_hex(0x94a3b8), 0);
+    lv_obj_set_style_text_font(dt_title, &lv_font_montserrat_12, 0);
+
+    lv_obj_t *dt_sub = lv_label_create(nav_dt);
+    lv_label_set_text(dt_sub, "2026-04-20 14:32");
+    lv_obj_set_pos(dt_sub, 40, 28);
+    lv_obj_set_style_text_color(dt_sub, lv_color_hex(0x374151), 0);
+    lv_obj_set_style_text_font(dt_sub, &lv_font_montserrat_10, 0);
+
+    /* -- I/O Test item  nav(0,112,180,52) -- */
+    lv_obj_t *nav_io = lv_obj_create(nav);
+    lv_obj_set_pos(nav_io, 0, 112);
+    lv_obj_set_size(nav_io, 180, 52);
+    lv_obj_set_style_bg_color(nav_io, COL_BG, 0);
+    lv_obj_set_style_bg_opa(nav_io, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(nav_io, 0, 0);
+    lv_obj_set_style_border_width(nav_io, 0, 0);
+    lv_obj_set_style_pad_all(nav_io, 0, 0);
+    lv_obj_remove_flag(nav_io, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *io_icon = lv_label_create(nav_io);
+    lv_label_set_text(io_icon, LV_SYMBOL_USB);
+    lv_obj_set_pos(io_icon, 14, 12);
+    lv_obj_set_style_text_color(io_icon, lv_color_hex(0x94a3b8), 0);
+    lv_obj_set_style_text_font(io_icon, &lv_font_montserrat_16, 0);
+
+    lv_obj_t *io_title = lv_label_create(nav_io);
+    lv_label_set_text(io_title, "I/O Test");
+    lv_obj_set_pos(io_title, 40, 10);
+    lv_obj_set_style_text_color(io_title, lv_color_hex(0x94a3b8), 0);
+    lv_obj_set_style_text_font(io_title, &lv_font_montserrat_12, 0);
+
+    lv_obj_t *io_sub = lv_label_create(nav_io);
+    lv_label_set_text(io_sub, "I/O test");
+    lv_obj_set_pos(io_sub, 40, 28);
+    lv_obj_set_style_text_color(io_sub, COL_MUTED, 0);
+    lv_obj_set_style_text_font(io_sub, &lv_font_montserrat_10, 0);
+
+    /* -- Divider + System Info  nav(4,182,172,1) -- */
+    lv_obj_t *nav_div = lv_obj_create(nav);
+    lv_obj_set_pos(nav_div, 4, 182);
+    lv_obj_set_size(nav_div, 172, 1);
+    lv_obj_set_style_bg_color(nav_div, lv_color_hex(0x1e293b), 0);
+    lv_obj_set_style_bg_opa(nav_div, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(nav_div, 0, 0);
+    lv_obj_set_style_border_width(nav_div, 0, 0);
+    lv_obj_set_style_pad_all(nav_div, 0, 0);
+    lv_obj_remove_flag(nav_div, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *sys_info_lbl = lv_label_create(nav);
+    lv_label_set_text(sys_info_lbl, "System Info");
+    lv_obj_set_pos(sys_info_lbl, 8, 192);
+    lv_obj_set_style_text_color(sys_info_lbl, lv_color_hex(0x94a3b8), 0);
+    lv_obj_set_style_text_font(sys_info_lbl, &lv_font_montserrat_10, 0);
+
+    static const char *sys_keys[]  = { "Firmware", "Serial", "Uptime" };
+    static const char *sys_vals[]  = { "v2.4.1",   "ITGC-00142", "14d 06:22" };
+    for (int i = 0; i < 3; i++) {
+        lv_obj_t *k = lv_label_create(nav);
+        lv_label_set_text(k, sys_keys[i]);
+        lv_obj_set_pos(k, 8, 210 + i * 18);
+        lv_obj_set_style_text_color(k, lv_color_hex(0x475569), 0);
+        lv_obj_set_style_text_font(k, &lv_font_montserrat_10, 0);
+
+        lv_obj_t *v = lv_label_create(nav);
+        lv_label_set_text(v, sys_vals[i]);
+        lv_obj_set_pos(v, 8, 222 + i * 18);
+        lv_obj_set_style_text_color(v, lv_color_hex(0x1e293b), 0);
+        lv_obj_set_style_text_font(v, &lv_font_montserrat_10, 0);
+    }
+
+    /* ── Right panel  content(196,8,596,410) ─────────────────── */
+    lv_obj_t *rpanel = lv_obj_create(c);
+    lv_obj_set_pos(rpanel, 196, 8);
+    lv_obj_set_size(rpanel, 596, 410);
+    lv_obj_set_style_bg_color(rpanel, lv_color_hex(0x1e293b), 0);
+    lv_obj_set_style_bg_opa(rpanel, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(rpanel, lv_color_hex(0x334155), 0);
+    lv_obj_set_style_border_width(rpanel, 1, 0);
+    lv_obj_set_style_radius(rpanel, 6, 0);
+    lv_obj_set_style_pad_all(rpanel, 0, 0);
+    lv_obj_remove_flag(rpanel, LV_OBJ_FLAG_SCROLLABLE);
+    /* panel inner coords: panel_x = SVG_x - 196, panel_y = SVG_y - 52 */
+
+    /* ── Section: Language  panel(20,26) ──────────────────────── */
+    lv_obj_t *sec_lang_title = lv_label_create(rpanel);
+    lv_label_set_text(sec_lang_title, "Language / Language");
+    lv_obj_set_pos(sec_lang_title, 20, 26);
+    lv_obj_set_style_text_color(sec_lang_title, COL_WHITE, 0);
+    lv_obj_set_style_text_font(sec_lang_title, &lv_font_montserrat_14, 0);
+
+    lv_obj_t *lang_div = lv_obj_create(rpanel);
+    lv_obj_set_pos(lang_div, 20, 34);
+    lv_obj_set_size(lang_div, 556, 1);
+    lv_obj_set_style_bg_color(lang_div, lv_color_hex(0x334155), 0);
+    lv_obj_set_style_bg_opa(lang_div, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(lang_div, 0, 0);
+    lv_obj_set_style_border_width(lang_div, 0, 0);
+    lv_obj_set_style_pad_all(lang_div, 0, 0);
+    lv_obj_remove_flag(lang_div, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* Japanese card (selected)  panel(20,44,172,80) */
+    lv_obj_t *card_jp = lv_obj_create(rpanel);
+    lv_obj_set_pos(card_jp, 20, 44);
+    lv_obj_set_size(card_jp, 172, 80);
+    lv_obj_set_style_bg_color(card_jp, lv_color_hex(0x1e3a5f), 0);
+    lv_obj_set_style_bg_opa(card_jp, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(card_jp, COL_BLUE, 0);
+    lv_obj_set_style_border_width(card_jp, 2, 0);
+    lv_obj_set_style_radius(card_jp, 6, 0);
+    lv_obj_set_style_pad_all(card_jp, 0, 0);
+    lv_obj_remove_flag(card_jp, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* Check circle at top-right */
+    lv_obj_t *check_dot = lv_obj_create(card_jp);
+    lv_obj_set_pos(check_dot, 148, 6);
+    lv_obj_set_size(check_dot, 16, 16);
+    lv_obj_set_style_bg_color(check_dot, COL_BLUE, 0);
+    lv_obj_set_style_bg_opa(check_dot, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(check_dot, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_border_width(check_dot, 0, 0);
+    lv_obj_set_style_pad_all(check_dot, 0, 0);
+    lv_obj_remove_flag(check_dot, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *check_lbl = lv_label_create(check_dot);
+    lv_label_set_text(check_lbl, LV_SYMBOL_OK);
+    lv_obj_set_style_text_color(check_lbl, COL_BG, 0);
+    lv_obj_set_style_text_font(check_lbl, &lv_font_montserrat_10, 0);
+    lv_obj_center(check_lbl);
+
+    lv_obj_t *jp_lbl1 = lv_label_create(card_jp);
+    lv_label_set_text(jp_lbl1, "\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e");  /* 日本語 UTF-8 */
+    lv_obj_set_pos(jp_lbl1, 12, 16);
+    lv_obj_set_style_text_color(jp_lbl1, COL_BLUE, 0);
+    lv_obj_set_style_text_font(jp_lbl1, &lv_font_montserrat_14, 0);
+
+    lv_obj_t *jp_lbl2 = lv_label_create(card_jp);
+    lv_label_set_text(jp_lbl2, "Japanese");
+    lv_obj_set_pos(jp_lbl2, 12, 36);
+    lv_obj_set_style_text_color(jp_lbl2, lv_color_hex(0x93c5fd), 0);
+    lv_obj_set_style_text_font(jp_lbl2, &lv_font_montserrat_10, 0);
+
+    lv_obj_t *jp_lbl3 = lv_label_create(card_jp);
+    lv_label_set_text(jp_lbl3, "\xe7\x8f\xbe\xe5\x9c\xa8\xe9\x81\xb8\xe6\x8a\x9e\xe4\xb8\xad");  /* 現在選択中 */
+    lv_obj_set_pos(jp_lbl3, 12, 54);
+    lv_obj_set_style_text_color(jp_lbl3, lv_color_hex(0x60a5fa), 0);
+    lv_obj_set_style_text_font(jp_lbl3, &lv_font_montserrat_10, 0);
+
+    /* English card  panel(208,44,172,80) */
+    lv_obj_t *card_en = lv_obj_create(rpanel);
+    lv_obj_set_pos(card_en, 208, 44);
+    lv_obj_set_size(card_en, 172, 80);
+    lv_obj_set_style_bg_color(card_en, lv_color_hex(0x111827), 0);
+    lv_obj_set_style_bg_opa(card_en, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(card_en, lv_color_hex(0x334155), 0);
+    lv_obj_set_style_border_width(card_en, 1, 0);
+    lv_obj_set_style_radius(card_en, 6, 0);
+    lv_obj_set_style_pad_all(card_en, 0, 0);
+    lv_obj_remove_flag(card_en, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *en_lbl1 = lv_label_create(card_en);
+    lv_label_set_text(en_lbl1, "English");
+    lv_obj_set_pos(en_lbl1, 12, 16);
+    lv_obj_set_style_text_color(en_lbl1, COL_MUTED, 0);
+    lv_obj_set_style_text_font(en_lbl1, &lv_font_montserrat_14, 0);
+
+    lv_obj_t *en_lbl2 = lv_label_create(card_en);
+    lv_label_set_text(en_lbl2, "\xe8\x8b\xb1\xe8\xaa\x9e");  /* 英語 */
+    lv_obj_set_pos(en_lbl2, 12, 36);
+    lv_obj_set_style_text_color(en_lbl2, lv_color_hex(0x374151), 0);
+    lv_obj_set_style_text_font(en_lbl2, &lv_font_montserrat_10, 0);
+
+    lv_obj_t *en_lbl3 = lv_label_create(card_en);
+    lv_label_set_text(en_lbl3, "\xe3\x82\xbf\xe3\x83\x83\xe3\x83\x97\xe3\x81\x97\xe3\x81\xa6\xe5\x88\x87\xe6\x9b\xbf");  /* タップして切替 */
+    lv_obj_set_pos(en_lbl3, 12, 54);
+    lv_obj_set_style_text_color(en_lbl3, lv_color_hex(0x374151), 0);
+    lv_obj_set_style_text_font(en_lbl3, &lv_font_montserrat_10, 0);
+
+    /* ── Section: Date/Time  panel y=150 ──────────────────────── */
+    lv_obj_t *sec_dt_title = lv_label_create(rpanel);
+    lv_label_set_text(sec_dt_title, "Date/Time");
+    lv_obj_set_pos(sec_dt_title, 20, 150);
+    lv_obj_set_style_text_color(sec_dt_title, COL_WHITE, 0);
+    lv_obj_set_style_text_font(sec_dt_title, &lv_font_montserrat_14, 0);
+
+    lv_obj_t *dt_div = lv_obj_create(rpanel);
+    lv_obj_set_pos(dt_div, 20, 158);
+    lv_obj_set_size(dt_div, 556, 1);
+    lv_obj_set_style_bg_color(dt_div, lv_color_hex(0x334155), 0);
+    lv_obj_set_style_bg_opa(dt_div, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(dt_div, 0, 0);
+    lv_obj_set_style_border_width(dt_div, 0, 0);
+    lv_obj_set_style_pad_all(dt_div, 0, 0);
+    lv_obj_remove_flag(dt_div, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* "Date" label  panel(20,176) */
+    lv_obj_t *date_lbl = lv_label_create(rpanel);
+    lv_label_set_text(date_lbl, "Date");
+    lv_obj_set_pos(date_lbl, 20, 176);
+    lv_obj_set_style_text_color(date_lbl, lv_color_hex(0x94a3b8), 0);
+    lv_obj_set_style_text_font(date_lbl, &lv_font_montserrat_10, 0);
+
+    /* Spinbox helper macro — creates a −/value/+ triplet */
+    /* Year spinbox  panel(20,182,90,36) */
+    typedef struct { int32_t x; int32_t y; int32_t w; const char *val; const char *unit; } SpinboxDef;
+    static const SpinboxDef date_spins[] = {
+        { 20, 182, 90, "2026", "\xe5\xb9\xb4" },   /* 年 */
+        { 128, 182, 74, "04",  "\xe6\x9c\x88" },    /* 月 */
+        { 224, 182, 74, "20",  "\xe6\x97\xa5" },    /* 日 */
+    };
+    static const SpinboxDef time_spins[] = {
+        { 20, 242, 74, "14", "\xe6\x99\x82" },   /* 時 */
+        { 116, 242, 74, "32", "\xe5\x88\x86" },  /* 分 */
+    };
+
+    auto make_spinbox = [&](lv_obj_t *parent, const SpinboxDef *d) {
+        lv_obj_t *box = lv_obj_create(parent);
+        lv_obj_set_pos(box, d->x, d->y);
+        lv_obj_set_size(box, d->w, 36);
+        lv_obj_set_style_bg_color(box, lv_color_hex(0x0f172a), 0);
+        lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_color(box, lv_color_hex(0x334155), 0);
+        lv_obj_set_style_border_width(box, 1, 0);
+        lv_obj_set_style_radius(box, 4, 0);
+        lv_obj_set_style_pad_all(box, 0, 0);
+        lv_obj_remove_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+
+        lv_obj_t *btn_m = lv_btn_create(box);
+        lv_obj_set_pos(btn_m, 0, 0);
+        lv_obj_set_size(btn_m, 24, 36);
+        lv_obj_set_style_bg_color(btn_m, lv_color_hex(0x1e293b), 0);
+        lv_obj_set_style_bg_opa(btn_m, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(btn_m, 0, 0);
+        lv_obj_set_style_pad_all(btn_m, 0, 0);
+        lv_obj_t *lbl_m = lv_label_create(btn_m);
+        lv_label_set_text(lbl_m, LV_SYMBOL_MINUS);
+        lv_obj_center(lbl_m);
+        lv_obj_set_style_text_color(lbl_m, lv_color_hex(0x94a3b8), 0);
+        lv_obj_set_style_text_font(lbl_m, &lv_font_montserrat_10, 0);
+
+        lv_obj_t *val_lbl = lv_label_create(box);
+        lv_label_set_text(val_lbl, d->val);
+        lv_obj_set_style_text_color(val_lbl, COL_WHITE, 0);
+        lv_obj_set_style_text_font(val_lbl, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_align(val_lbl, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_width(val_lbl, d->w - 48);
+        lv_obj_set_pos(val_lbl, 24, 11);
+
+        lv_obj_t *btn_p = lv_btn_create(box);
+        lv_obj_set_pos(btn_p, d->w - 24, 0);
+        lv_obj_set_size(btn_p, 24, 36);
+        lv_obj_set_style_bg_color(btn_p, lv_color_hex(0x1e293b), 0);
+        lv_obj_set_style_bg_opa(btn_p, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(btn_p, 0, 0);
+        lv_obj_set_style_pad_all(btn_p, 0, 0);
+        lv_obj_t *lbl_p = lv_label_create(btn_p);
+        lv_label_set_text(lbl_p, LV_SYMBOL_PLUS);
+        lv_obj_center(lbl_p);
+        lv_obj_set_style_text_color(lbl_p, lv_color_hex(0x94a3b8), 0);
+        lv_obj_set_style_text_font(lbl_p, &lv_font_montserrat_10, 0);
+
+        lv_obj_t *unit_lbl = lv_label_create(parent);
+        lv_label_set_text(unit_lbl, d->unit);
+        lv_obj_set_pos(unit_lbl, d->x + d->w + 2, d->y + 11);
+        lv_obj_set_style_text_color(unit_lbl, lv_color_hex(0x94a3b8), 0);
+        lv_obj_set_style_text_font(unit_lbl, &lv_font_montserrat_10, 0);
+    };
+
+    for (int i = 0; i < 3; i++) make_spinbox(rpanel, &date_spins[i]);
+
+    /* "Time" label  panel(20,236) */
+    lv_obj_t *time_lbl = lv_label_create(rpanel);
+    lv_label_set_text(time_lbl, "Time");
+    lv_obj_set_pos(time_lbl, 20, 236);
+    lv_obj_set_style_text_color(time_lbl, lv_color_hex(0x94a3b8), 0);
+    lv_obj_set_style_text_font(time_lbl, &lv_font_montserrat_10, 0);
+
+    for (int i = 0; i < 2; i++) make_spinbox(rpanel, &time_spins[i]);
+
+    /* Apply / Update Time button  panel(224,242,100,36) */
+    lv_obj_t *btn_apply = lv_btn_create(rpanel);
+    lv_obj_set_pos(btn_apply, 224, 242);
+    lv_obj_set_size(btn_apply, 100, 36);
+    lv_obj_set_style_bg_color(btn_apply, lv_color_hex(0x0f6e56), 0);
+    lv_obj_set_style_bg_opa(btn_apply, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(btn_apply, 0, 0);
+    lv_obj_set_style_radius(btn_apply, 4, 0);
+    lv_obj_set_style_pad_all(btn_apply, 0, 0);
+    lv_obj_t *lbl_apply = lv_label_create(btn_apply);
+    lv_label_set_text(lbl_apply, "Update Time");
+    lv_obj_center(lbl_apply);
+    lv_obj_set_style_text_color(lbl_apply, COL_WHITE, 0);
+    lv_obj_set_style_text_font(lbl_apply, &lv_font_montserrat_12, 0);
+
+    /* ── Section: I/O Test  panel y=300 ───────────────────────── */
+    lv_obj_t *sec_io_title = lv_label_create(rpanel);
+    lv_label_set_text(sec_io_title, "I/O Test");
+    lv_obj_set_pos(sec_io_title, 20, 300);
+    lv_obj_set_style_text_color(sec_io_title, COL_WHITE, 0);
+    lv_obj_set_style_text_font(sec_io_title, &lv_font_montserrat_14, 0);
+
+    lv_obj_t *io_div = lv_obj_create(rpanel);
+    lv_obj_set_pos(io_div, 20, 308);
+    lv_obj_set_size(io_div, 556, 1);
+    lv_obj_set_style_bg_color(io_div, lv_color_hex(0x334155), 0);
+    lv_obj_set_style_bg_opa(io_div, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(io_div, 0, 0);
+    lv_obj_set_style_border_width(io_div, 0, 0);
+    lv_obj_set_style_pad_all(io_div, 0, 0);
+    lv_obj_remove_flag(io_div, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* Digital Input label  panel(20,326) */
+    lv_obj_t *di_lbl = lv_label_create(rpanel);
+    lv_label_set_text(di_lbl, "Digital Input");
+    lv_obj_set_pos(di_lbl, 20, 326);
+    lv_obj_set_style_text_color(di_lbl, lv_color_hex(0x94a3b8), 0);
+    lv_obj_set_style_text_font(di_lbl, &lv_font_montserrat_10, 0);
+
+    /* IN1..IN4  panel(20,332), (82,332), (144,332), (206,332)  each 56x28 */
+    typedef struct { int32_t x; bool on; const char *name; } InBtn;
+    static const InBtn in_btns[] = {
+        { 20,  true,  "IN1" },
+        { 82,  false, "IN2" },
+        { 144, false, "IN3" },
+        { 206, true,  "IN4" },
+    };
+    for (int i = 0; i < 4; i++) {
+        lv_obj_t *btn = lv_obj_create(rpanel);
+        lv_obj_set_pos(btn, in_btns[i].x, 332);
+        lv_obj_set_size(btn, 56, 28);
+        lv_obj_set_style_bg_color(btn, in_btns[i].on ? lv_color_hex(0x14532d) : lv_color_hex(0x1f2937), 0);
+        lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_color(btn, in_btns[i].on ? lv_color_hex(0x22c55e) : lv_color_hex(0x374151), 0);
+        lv_obj_set_style_border_width(btn, 1, 0);
+        lv_obj_set_style_radius(btn, 4, 0);
+        lv_obj_set_style_pad_all(btn, 0, 0);
+        lv_obj_remove_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
+
+        lv_obj_t *dot = lv_obj_create(btn);
+        lv_obj_set_size(dot, 6, 6);
+        lv_obj_set_pos(dot, 6, 11);
+        lv_obj_set_style_bg_color(dot, in_btns[i].on ? lv_color_hex(0x22c55e) : lv_color_hex(0x4b5563), 0);
+        lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_border_width(dot, 0, 0);
+        lv_obj_set_style_pad_all(dot, 0, 0);
+        lv_obj_remove_flag(dot, LV_OBJ_FLAG_SCROLLABLE);
+
+        lv_obj_t *lbl = lv_label_create(btn);
+        char buf[16];
+        lv_snprintf(buf, sizeof(buf), "%s %s", in_btns[i].name, in_btns[i].on ? "ON" : "OFF");
+        lv_label_set_text(lbl, buf);
+        lv_obj_set_pos(lbl, 16, 8);
+        lv_obj_set_style_text_color(lbl, in_btns[i].on ? lv_color_hex(0x22c55e) : lv_color_hex(0x6b7280), 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+    }
+
+    /* Digital Output label  panel(352,326) */
+    lv_obj_t *do_lbl = lv_label_create(rpanel);
+    lv_label_set_text(do_lbl, "Digital Output");
+    lv_obj_set_pos(do_lbl, 352, 326);
+    lv_obj_set_style_text_color(do_lbl, lv_color_hex(0x94a3b8), 0);
+    lv_obj_set_style_text_font(do_lbl, &lv_font_montserrat_10, 0);
+
+    /* OUT1..OUT3  panel(352,332), (426,332), (500,332)  each 68x28 */
+    typedef struct { int32_t x; bool forced; const char *name; const char *state; } OutBtn;
+    static const OutBtn out_btns[] = {
+        { 352, true,  "OUT1", "Force ON" },
+        { 426, false, "OUT2", "OFF" },
+        { 500, false, "OUT3", "OFF" },
+    };
+    for (int i = 0; i < 3; i++) {
+        lv_obj_t *btn = lv_obj_create(rpanel);
+        lv_obj_set_pos(btn, out_btns[i].x, 332);
+        lv_obj_set_size(btn, 68, 28);
+        lv_obj_set_style_bg_color(btn, out_btns[i].forced ? lv_color_hex(0x1e3a5f) : lv_color_hex(0x1f2937), 0);
+        lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_color(btn, out_btns[i].forced ? COL_BLUE : lv_color_hex(0x374151), 0);
+        lv_obj_set_style_border_width(btn, 1, 0);
+        lv_obj_set_style_radius(btn, 4, 0);
+        lv_obj_set_style_pad_all(btn, 0, 0);
+        lv_obj_remove_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
+
+        lv_obj_t *lbl = lv_label_create(btn);
+        lv_label_set_text(lbl, out_btns[i].state);
+        lv_obj_center(lbl);
+        lv_obj_set_style_text_color(lbl, out_btns[i].forced ? lv_color_hex(0x93c5fd) : lv_color_hex(0x6b7280), 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_10, 0);
+    }
+
+    /* Note text  panel(20,380) */
+    lv_obj_t *note_lbl = lv_label_create(rpanel);
+    lv_label_set_text(note_lbl, "* Force ON overrides automatic output control.");
+    lv_obj_set_pos(note_lbl, 20, 380);
+    lv_obj_set_style_text_color(note_lbl, lv_color_hex(0x475569), 0);
+    lv_obj_set_style_text_font(note_lbl, &lv_font_montserrat_10, 0);
 }
 
 // ============================================================
