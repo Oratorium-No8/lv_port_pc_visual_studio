@@ -40,6 +40,7 @@ static lv_obj_t *scr_threshold;
 static lv_obj_t *scr_history;
 static lv_obj_t *scr_correction;
 static lv_obj_t *scr_detail;
+static lv_obj_t *scr_threshold_manual = NULL;
 
 // scr_settings_home タイル
 static lv_obj_t *settings_tile[5];
@@ -101,6 +102,10 @@ static lv_obj_t  *threshold_plot_canvas = NULL;
 static uint8_t    history_plot_buf[400 * 290 * 4];
 static lv_obj_t  *history_plot_canvas = NULL;
 
+// threshold-manual preview canvas (244x244)
+static uint8_t    thresh_manual_plot_buf[244 * 244 * 4];
+static lv_obj_t  *thresh_manual_canvas = NULL;
+
 // memory selector state
 static uint32_t   g_mem_no = 42;
 static lv_obj_t  *mem_popup_overlay = NULL;
@@ -117,6 +122,7 @@ static void draw_pie_chart(int32_t ok, int32_t ng);
 static void init_trend_chart(void);
 static void draw_threshold_plot(lv_timer_t *timer);
 static void draw_history_plot(lv_timer_t *timer);
+static void draw_thresh_manual_preview(lv_timer_t *timer);
 static void mem_prev_cb(lv_event_t *e);
 static void mem_next_cb(lv_event_t *e);
 static void show_mem_popup_cb(lv_event_t *e);
@@ -3793,6 +3799,615 @@ static void create_scr_detail(void)
 }
 
 // ============================================================
+//  Threshold-Manual preview canvas draw (one-shot timer)
+//  Canvas 244x244 ARGB8888
+//  Rotated ellipse: cx=122,cy=122, rx=54,ry=40, θ=-25°
+// ============================================================
+static void draw_thresh_manual_preview(lv_timer_t *timer)
+{
+    LV_UNUSED(timer);
+    if (!thresh_manual_canvas) return;
+
+    lv_layer_t layer;
+    lv_canvas_init_layer(thresh_manual_canvas, &layer);
+
+    /* 1. Background */
+    {
+        lv_draw_rect_dsc_t r;
+        lv_draw_rect_dsc_init(&r);
+        r.bg_color     = lv_color_hex(0x111827);
+        r.bg_opa       = LV_OPA_COVER;
+        r.radius       = 0;
+        r.border_width = 0;
+        lv_area_t a    = {0, 0, 243, 243};
+        lv_draw_rect(&layer, &r, &a);
+    }
+
+    /* 2. Grid lines #1e293b: h at 62,122,182; v at 60,122,184 */
+    {
+        lv_draw_line_dsc_t g;
+        lv_draw_line_dsc_init(&g);
+        g.color = lv_color_hex(0x1e293b);
+        g.width = 1;
+        g.opa   = LV_OPA_COVER;
+        static const int32_t HY[] = {62, 122, 182};
+        static const int32_t VX[] = {60, 122, 184};
+        for (int i = 0; i < 3; i++) {
+            g.p1.x = 0;   g.p1.y = HY[i];
+            g.p2.x = 243; g.p2.y = HY[i];
+            lv_draw_line(&layer, &g);
+        }
+        for (int i = 0; i < 3; i++) {
+            g.p1.x = VX[i]; g.p1.y = 0;
+            g.p2.x = VX[i]; g.p2.y = 243;
+            lv_draw_line(&layer, &g);
+        }
+    }
+
+    /* 3. X/Y axes #2d3748 */
+    {
+        lv_draw_line_dsc_t ax;
+        lv_draw_line_dsc_init(&ax);
+        ax.color = lv_color_hex(0x2d3748);
+        ax.width = 1;
+        ax.opa   = LV_OPA_COVER;
+        ax.p1.x = 0;   ax.p1.y = 122; ax.p2.x = 243; ax.p2.y = 122;
+        lv_draw_line(&layer, &ax);
+        ax.p1.x = 122; ax.p1.y = 0;   ax.p2.x = 122; ax.p2.y = 243;
+        lv_draw_line(&layer, &ax);
+    }
+
+    /* 4. Rotated ellipse: θ=-25° → cos=-25°=0.90631, sin=-25°=-0.42262
+       x(t)=122+54cos(t)·cosθ - 40sin(t)·sinθ
+       y(t)=122+54cos(t)·sinθ + 40sin(t)·cosθ   */
+    {
+        lv_draw_line_dsc_t el;
+        lv_draw_line_dsc_init(&el);
+        el.color = lv_color_hex(0xa78bfa);
+        el.width = 2;
+        el.opa   = LV_OPA_COVER;
+        const double COSTH =  0.906308;
+        const double SINTH = -0.422618;
+        const double STEP  =  3.14159265358979 / 30.0;
+        for (int i = 0; i < 60; i++) {
+            double a1 = i * STEP, a2 = (i + 1) * STEP;
+            el.p1.x = (int32_t)(122.0 + 54.0*cos(a1)*COSTH - 40.0*sin(a1)*SINTH);
+            el.p1.y = (int32_t)(122.0 + 54.0*cos(a1)*SINTH + 40.0*sin(a1)*COSTH);
+            el.p2.x = (int32_t)(122.0 + 54.0*cos(a2)*COSTH - 40.0*sin(a2)*SINTH);
+            el.p2.y = (int32_t)(122.0 + 54.0*cos(a2)*SINTH + 40.0*sin(a2)*COSTH);
+            lv_draw_line(&layer, &el);
+        }
+    }
+
+    /* 5. a-arm: center → major-axis tip (171,99), dashed purple */
+    {
+        lv_draw_line_dsc_t ar;
+        lv_draw_line_dsc_init(&ar);
+        ar.color      = lv_color_hex(0xa78bfa);
+        ar.width      = 1;
+        ar.opa        = LV_OPA_60;
+        ar.dash_width = 4;
+        ar.dash_gap   = 3;
+        ar.p1.x = 122; ar.p1.y = 122;
+        ar.p2.x = 171; ar.p2.y = 99;
+        lv_draw_line(&layer, &ar);
+    }
+
+    /* 6. b-arm: center → minor-axis tip (139,158), dashed purple */
+    {
+        lv_draw_line_dsc_t br;
+        lv_draw_line_dsc_init(&br);
+        br.color      = lv_color_hex(0xa78bfa);
+        br.width      = 1;
+        br.opa        = LV_OPA_60;
+        br.dash_width = 4;
+        br.dash_gap   = 3;
+        br.p1.x = 122; br.p1.y = 122;
+        br.p2.x = 139; br.p2.y = 158;
+        lv_draw_line(&layer, &br);
+    }
+
+    /* 7. θ arc: 0° → -25° at r=20px from center, amber */
+    {
+        lv_draw_line_dsc_t th;
+        lv_draw_line_dsc_init(&th);
+        th.color = lv_color_hex(0xfbbf24);
+        th.width = 1;
+        th.opa   = LV_OPA_COVER;
+        const double END  = -0.43633;  /* -25° in radians */
+        const double STEP = END / 6.0;
+        for (int i = 0; i < 6; i++) {
+            double a1 = i * STEP, a2 = (i + 1) * STEP;
+            th.p1.x = (int32_t)(122.0 + 20.0 * cos(a1));
+            th.p1.y = (int32_t)(122.0 + 20.0 * sin(a1));
+            th.p2.x = (int32_t)(122.0 + 20.0 * cos(a2));
+            th.p2.y = (int32_t)(122.0 + 20.0 * sin(a2));
+            lv_draw_line(&layer, &th);
+        }
+    }
+
+    /* 8. Center cross */
+    {
+        lv_draw_line_dsc_t cr;
+        lv_draw_line_dsc_init(&cr);
+        cr.color = lv_color_hex(0x475569);
+        cr.width = 1;
+        cr.opa   = LV_OPA_COVER;
+        cr.p1.x = 118; cr.p1.y = 122; cr.p2.x = 126; cr.p2.y = 122;
+        lv_draw_line(&layer, &cr);
+        cr.p1.x = 122; cr.p1.y = 118; cr.p2.x = 122; cr.p2.y = 126;
+        lv_draw_line(&layer, &cr);
+    }
+
+    /* 9. X/Y axis labels */
+    {
+        lv_draw_label_dsc_t lbl;
+        lv_draw_label_dsc_init(&lbl);
+        lbl.font  = &lv_font_montserrat_10;
+        lbl.opa   = LV_OPA_COVER;
+        lbl.color = lv_color_hex(0x475569);
+        lbl.text  = "X";
+        lv_area_t a1 = {228, 110, 243, 123};
+        lv_draw_label(&layer, &lbl, &a1);
+        lbl.text  = "Y";
+        lv_area_t a2 = {124, 0, 139, 13};
+        lv_draw_label(&layer, &lbl, &a2);
+    }
+
+    /* 10. a / b / θ arm labels */
+    {
+        lv_draw_label_dsc_t lbl;
+        lv_draw_label_dsc_init(&lbl);
+        lbl.font  = &lv_font_montserrat_10;
+        lbl.opa   = LV_OPA_COVER;
+        lbl.color = lv_color_hex(0xa78bfa);
+        lbl.text  = "a";
+        lv_area_t a1 = {174, 88, 187, 101};
+        lv_draw_label(&layer, &lbl, &a1);
+        lbl.text  = "b";
+        lv_area_t a2 = {142, 161, 155, 174};
+        lv_draw_label(&layer, &lbl, &a2);
+        lbl.color = lv_color_hex(0xfbbf24);
+        lbl.text  = "\xce\xb8";   /* θ UTF-8 */
+        lv_area_t a3 = {144, 106, 157, 119};
+        lv_draw_label(&layer, &lbl, &a3);
+    }
+
+    lv_canvas_finish_layer(thresh_manual_canvas, &layer);
+}
+
+// ============================================================
+//  scr_threshold_manual  手動閾値入力 (左Ch一覧/中央プレビュー/右パラメータ)
+// ============================================================
+static void create_scr_threshold_manual(void)
+{
+    lv_obj_t *c = make_settings_subscr(&scr_threshold_manual, "Threshold \xe2\x80\x94 Manual");
+    /* content_y = SVG_y - 44
+       right panel inner_x = content_x - 442, inner_y = content_y - 8  */
+
+    // ── LEFT PANEL: channel list  content(8,8,150,392) ─────────
+    lv_obj_t *left = lv_obj_create(c);
+    lv_obj_set_pos(left, 8, 8);
+    lv_obj_set_size(left, 150, 392);
+    lv_obj_set_style_bg_color(left, lv_color_hex(0x111827), 0);
+    lv_obj_set_style_bg_opa(left, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(left, 6, 0);
+    lv_obj_set_style_border_color(left, lv_color_hex(0x1e293b), 0);
+    lv_obj_set_style_border_width(left, 1, 0);
+    lv_obj_set_style_pad_all(left, 0, 0);
+    lv_obj_remove_flag(left, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* 5 channel rows, each 70px */
+    struct ChRow { int ch; bool sel; bool warn; const char *ab; const char *theta; };
+    static const ChRow CH_ROWS[5] = {
+        {1, true,  false, "a=1.800  b=1.350", "\xce\xb8=+25\xc2\xb0"},
+        {2, false, false, "a=----  b=----",   ""},
+        {3, false, true,  "a=----  b=----",   ""},
+        {4, false, false, "a=----  b=----",   ""},
+        {5, false, false, "a=----  b=----",   ""},
+    };
+    for (int i = 0; i < 5; i++) {
+        const ChRow &cr = CH_ROWS[i];
+        int32_t row_y = i * 70;
+
+        lv_obj_t *row = lv_obj_create(left);
+        lv_obj_set_pos(row, 0, row_y);
+        lv_obj_set_size(row, 150, 70);
+        lv_obj_set_style_bg_color(row, cr.sel ? lv_color_hex(0x1e3a5f) : lv_color_hex(0x111827), 0);
+        lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
+        bare_obj(row);
+
+        /* left accent bar (4px purple) for selected */
+        if (cr.sel) {
+            lv_obj_t *bar = lv_obj_create(row);
+            lv_obj_set_pos(bar, 0, 0);
+            lv_obj_set_size(bar, 4, 70);
+            lv_obj_set_style_bg_color(bar, lv_color_hex(0xa78bfa), 0);
+            lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+            bare_obj(bar);
+        }
+
+        char ch_buf[8];
+        lv_snprintf(ch_buf, sizeof(ch_buf), "Ch %d", cr.ch);
+        lv_obj_t *lbl_ch = lv_label_create(row);
+        lv_label_set_text(lbl_ch, ch_buf);
+        lv_obj_set_pos(lbl_ch, 12, 10);
+        lv_obj_set_style_text_font(lbl_ch, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_text_color(lbl_ch, cr.sel ? lv_color_hex(0xc4b5fd) : lv_color_hex(0x94a3b8), 0);
+
+        lv_obj_t *lbl_ab = lv_label_create(row);
+        lv_label_set_text(lbl_ab, cr.ab);
+        lv_obj_set_pos(lbl_ab, 12, 32);
+        lv_obj_set_style_text_font(lbl_ab, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_color(lbl_ab, cr.sel ? lv_color_hex(0xa78bfa) : lv_color_hex(0x334155), 0);
+
+        if (cr.sel && cr.theta[0]) {
+            lv_obj_t *lbl_th = lv_label_create(row);
+            lv_label_set_text(lbl_th, cr.theta);
+            lv_obj_set_pos(lbl_th, 12, 50);
+            lv_obj_set_style_text_font(lbl_th, &lv_font_montserrat_10, 0);
+            lv_obj_set_style_text_color(lbl_th, lv_color_hex(0xfbbf24), 0);
+        }
+
+        /* warning dot for Ch3 at left-inner(136, row_y+16) */
+        if (cr.warn) {
+            lv_obj_t *dot = lv_obj_create(left);
+            lv_obj_set_pos(dot, 136, row_y + 16);
+            lv_obj_set_size(dot, 8, 8);
+            lv_obj_set_style_bg_color(dot, lv_color_hex(0xf59e0b), 0);
+            lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
+            lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
+            bare_obj(dot);
+        }
+
+        /* row separator */
+        if (i < 4) {
+            lv_obj_t *sep = lv_obj_create(left);
+            lv_obj_set_pos(sep, 0, row_y + 69);
+            lv_obj_set_size(sep, 150, 1);
+            lv_obj_set_style_bg_color(sep, lv_color_hex(0x1e293b), 0);
+            lv_obj_set_style_bg_opa(sep, LV_OPA_COVER, 0);
+            bare_obj(sep);
+        }
+    }
+
+    /* scroll hint at bottom of left panel */
+    lv_obj_t *lbl_more = lv_label_create(left);
+    lv_label_set_text(lbl_more, "\xe2\x96\xbe  6 ~ 16");
+    lv_obj_set_pos(lbl_more, 0, 360);
+    lv_obj_set_size(lbl_more, 150, 20);
+    lv_obj_set_style_text_font(lbl_more, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(lbl_more, lv_color_hex(0x334155), 0);
+    lv_obj_set_style_text_align(lbl_more, LV_TEXT_ALIGN_CENTER, 0);
+
+    // ── CENTER CANVAS CONTAINER  content(178,34,244,244) ───────
+    lv_obj_t *canvas_cont = lv_obj_create(c);
+    lv_obj_set_pos(canvas_cont, 178, 34);
+    lv_obj_set_size(canvas_cont, 244, 244);
+    lv_obj_set_style_bg_color(canvas_cont, lv_color_hex(0x111827), 0);
+    lv_obj_set_style_bg_opa(canvas_cont, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(canvas_cont, 4, 0);
+    lv_obj_set_style_border_color(canvas_cont, lv_color_hex(0x2d1b69), 0);
+    lv_obj_set_style_border_width(canvas_cont, 1, 0);
+    lv_obj_set_style_pad_all(canvas_cont, 0, 0);
+    lv_obj_remove_flag(canvas_cont, LV_OBJ_FLAG_SCROLLABLE);
+
+    thresh_manual_canvas = lv_canvas_create(canvas_cont);
+    lv_canvas_set_buffer(thresh_manual_canvas, thresh_manual_plot_buf, 244, 244, LV_COLOR_FORMAT_ARGB8888);
+    lv_obj_set_pos(thresh_manual_canvas, 0, 0);
+    lv_obj_set_size(thresh_manual_canvas, 244, 244);
+
+    /* canvas subtitle */
+    lv_obj_t *lbl_cv_ttl = lv_label_create(c);
+    lv_label_set_text(lbl_cv_ttl, "Ch 1  Ellipse Preview");
+    lv_obj_set_pos(lbl_cv_ttl, 178, 284);
+    lv_obj_set_size(lbl_cv_ttl, 244, 16);
+    lv_obj_set_style_text_font(lbl_cv_ttl, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(lbl_cv_ttl, lv_color_hex(0x475569), 0);
+    lv_obj_set_style_text_align(lbl_cv_ttl, LV_TEXT_ALIGN_CENTER, 0);
+
+    // ── RIGHT PANEL  content(442,8,350,392) ────────────────────
+    lv_obj_t *rp = lv_obj_create(c);
+    lv_obj_set_pos(rp, 442, 8);
+    lv_obj_set_size(rp, 350, 392);
+    lv_obj_set_style_bg_color(rp, COL_SURFACE, 0);
+    lv_obj_set_style_bg_opa(rp, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(rp, 8, 0);
+    lv_obj_set_style_border_color(rp, lv_color_hex(0x334155), 0);
+    lv_obj_set_style_border_width(rp, 1, 0);
+    lv_obj_set_style_pad_all(rp, 0, 0);
+    lv_obj_remove_flag(rp, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *lbl_rp_ttl = lv_label_create(rp);
+    lv_label_set_text(lbl_rp_ttl, "Ch 1  -  Manual Threshold");
+    lv_obj_set_pos(lbl_rp_ttl, 16, 12);
+    lv_obj_set_style_text_font(lbl_rp_ttl, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(lbl_rp_ttl, lv_color_hex(0x94a3b8), 0);
+
+    {
+        lv_obj_t *d = lv_obj_create(rp);
+        lv_obj_set_pos(d, 16, 34); lv_obj_set_size(d, 318, 1);
+        lv_obj_set_style_bg_color(d, lv_color_hex(0x334155), 0);
+        lv_obj_set_style_bg_opa(d, LV_OPA_COVER, 0);
+        bare_obj(d);
+    }
+
+    /* a and b axis spinbox sections
+       y_base: a=40, b=178
+       fill_px: a=113 (1.800/5.0 * 314), b=85 (1.350/5.0 * 314)  */
+    struct AxisParam { const char *label; const char *val; int32_t fill_px; int32_t y_base; };
+    const AxisParam AXES[2] = {
+        {"a  (semi-axis)", "1.800", 113, 40},
+        {"b  (semi-axis)", "1.350",  85, 178},
+    };
+    for (int ai = 0; ai < 2; ai++) {
+        const AxisParam &ap = AXES[ai];
+
+        lv_obj_t *lbl_ax = lv_label_create(rp);
+        lv_label_set_text(lbl_ax, ap.label);
+        lv_obj_set_pos(lbl_ax, 16, ap.y_base);
+        lv_obj_set_style_text_font(lbl_ax, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_color(lbl_ax, lv_color_hex(0x64748b), 0);
+
+        /* input box inner(16, y_base+10, 314, 52) */
+        lv_obj_t *box = lv_obj_create(rp);
+        lv_obj_set_pos(box, 16, ap.y_base + 10);
+        lv_obj_set_size(box, 314, 52);
+        lv_obj_set_style_bg_color(box, lv_color_hex(0x0f172a), 0);
+        lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(box, 6, 0);
+        lv_obj_set_style_border_color(box, lv_color_hex(0x334155), 0);
+        lv_obj_set_style_border_width(box, 1, 0);
+        lv_obj_set_style_pad_all(box, 0, 0);
+        lv_obj_remove_flag(box, LV_OBJ_FLAG_SCROLLABLE);
+
+        /* minus button at box(6,6,40,40) */
+        lv_obj_t *btn_m = lv_obj_create(box);
+        lv_obj_set_pos(btn_m, 6, 6); lv_obj_set_size(btn_m, 40, 40);
+        lv_obj_set_style_bg_color(btn_m, lv_color_hex(0x1e3a5f), 0);
+        lv_obj_set_style_bg_opa(btn_m, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(btn_m, 6, 0);
+        lv_obj_set_style_border_color(btn_m, lv_color_hex(0x1d4ed8), 0);
+        lv_obj_set_style_border_width(btn_m, 1, 0);
+        lv_obj_set_style_pad_all(btn_m, 0, 0);
+        lv_obj_remove_flag(btn_m, LV_OBJ_FLAG_SCROLLABLE);
+        {
+            lv_obj_t *l = lv_label_create(btn_m);
+            lv_label_set_text(l, LV_SYMBOL_MINUS);
+            lv_obj_set_style_text_font(l, &lv_font_montserrat_16, 0);
+            lv_obj_set_style_text_color(l, lv_color_hex(0x93c5fd), 0);
+            lv_obj_center(l);
+        }
+
+        /* value label centered in box */
+        lv_obj_t *lbl_val = lv_label_create(box);
+        lv_label_set_text(lbl_val, ap.val);
+        lv_obj_set_pos(lbl_val, 52, 0);
+        lv_obj_set_size(lbl_val, 198, 52);
+        lv_obj_set_style_text_font(lbl_val, &lv_font_montserrat_20, 0);
+        lv_obj_set_style_text_color(lbl_val, lv_color_hex(0xa78bfa), 0);
+        lv_obj_set_style_text_align(lbl_val, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_pad_top(lbl_val, 13, 0);
+
+        /* unit label */
+        lv_obj_t *lbl_unit = lv_label_create(box);
+        lv_label_set_text(lbl_unit, "V");
+        lv_obj_set_pos(lbl_unit, 256, 0);
+        lv_obj_set_size(lbl_unit, 32, 52);
+        lv_obj_set_style_text_font(lbl_unit, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(lbl_unit, lv_color_hex(0x475569), 0);
+        lv_obj_set_style_pad_top(lbl_unit, 18, 0);
+
+        /* plus button at box(268,6,40,40) */
+        lv_obj_t *btn_p = lv_obj_create(box);
+        lv_obj_set_pos(btn_p, 268, 6); lv_obj_set_size(btn_p, 40, 40);
+        lv_obj_set_style_bg_color(btn_p, lv_color_hex(0x1e3a5f), 0);
+        lv_obj_set_style_bg_opa(btn_p, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(btn_p, 6, 0);
+        lv_obj_set_style_border_color(btn_p, lv_color_hex(0x1d4ed8), 0);
+        lv_obj_set_style_border_width(btn_p, 1, 0);
+        lv_obj_set_style_pad_all(btn_p, 0, 0);
+        lv_obj_remove_flag(btn_p, LV_OBJ_FLAG_SCROLLABLE);
+        {
+            lv_obj_t *l = lv_label_create(btn_p);
+            lv_label_set_text(l, LV_SYMBOL_PLUS);
+            lv_obj_set_style_text_font(l, &lv_font_montserrat_16, 0);
+            lv_obj_set_style_text_color(l, lv_color_hex(0x93c5fd), 0);
+            lv_obj_center(l);
+        }
+
+        /* slider track at rp-inner(16, y_base+70, 314, 6) */
+        lv_obj_t *sl_track = lv_obj_create(rp);
+        lv_obj_set_pos(sl_track, 16, ap.y_base + 70);
+        lv_obj_set_size(sl_track, 314, 6);
+        lv_obj_set_style_bg_color(sl_track, lv_color_hex(0x0f172a), 0);
+        lv_obj_set_style_bg_opa(sl_track, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(sl_track, 3, 0);
+        bare_obj(sl_track);
+
+        lv_obj_t *sl_fill = lv_obj_create(rp);
+        lv_obj_set_pos(sl_fill, 16, ap.y_base + 70);
+        lv_obj_set_size(sl_fill, ap.fill_px, 6);
+        lv_obj_set_style_bg_color(sl_fill, lv_color_hex(0xa78bfa), 0);
+        lv_obj_set_style_bg_opa(sl_fill, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(sl_fill, 3, 0);
+        bare_obj(sl_fill);
+
+        lv_obj_t *sl_knob = lv_obj_create(rp);
+        lv_obj_set_pos(sl_knob, 16 + ap.fill_px - 9, ap.y_base + 67);
+        lv_obj_set_size(sl_knob, 18, 18);
+        lv_obj_set_style_bg_color(sl_knob, lv_color_hex(0xa78bfa), 0);
+        lv_obj_set_style_bg_opa(sl_knob, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(sl_knob, LV_RADIUS_CIRCLE, 0);
+        bare_obj(sl_knob);
+
+        /* slider range labels */
+        {
+            lv_obj_t *l = lv_label_create(rp);
+            lv_label_set_text(l, "0.0");
+            lv_obj_set_pos(l, 16, ap.y_base + 80);
+            lv_obj_set_style_text_font(l, &lv_font_montserrat_10, 0);
+            lv_obj_set_style_text_color(l, lv_color_hex(0x334155), 0);
+        }
+        {
+            lv_obj_t *l = lv_label_create(rp);
+            lv_label_set_text(l, "5.0 V");
+            lv_obj_set_pos(l, 295, ap.y_base + 80);
+            lv_obj_set_style_text_font(l, &lv_font_montserrat_10, 0);
+            lv_obj_set_style_text_color(l, lv_color_hex(0x334155), 0);
+        }
+
+        /* step selector label */
+        {
+            lv_obj_t *l = lv_label_create(rp);
+            lv_label_set_text(l, "Step");
+            lv_obj_set_pos(l, 16, ap.y_base + 96);
+            lv_obj_set_style_text_font(l, &lv_font_montserrat_10, 0);
+            lv_obj_set_style_text_color(l, lv_color_hex(0x64748b), 0);
+        }
+
+        /* step buttons: 0.01 / 0.05✓ / 0.10 */
+        static const char *const SV[] = {"0.01", "0.05", "0.10"};
+        static const bool        SS[] = {false, true, false};
+        static const int32_t     SX[] = {50, 108, 166};
+        for (int si = 0; si < 3; si++) {
+            lv_obj_t *sb = lv_obj_create(rp);
+            lv_obj_set_pos(sb, SX[si], ap.y_base + 93);
+            lv_obj_set_size(sb, 52, 26);
+            lv_obj_set_style_bg_color(sb, SS[si] ? lv_color_hex(0x2d1b69) : COL_BG, 0);
+            lv_obj_set_style_bg_opa(sb, LV_OPA_COVER, 0);
+            lv_obj_set_style_radius(sb, 4, 0);
+            lv_obj_set_style_border_color(sb, SS[si] ? lv_color_hex(0x7c3aed) : COL_BTN_GRAY, 0);
+            lv_obj_set_style_border_width(sb, 1, 0);
+            lv_obj_set_style_pad_all(sb, 0, 0);
+            lv_obj_remove_flag(sb, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_t *lbl_sv = lv_label_create(sb);
+            lv_label_set_text(lbl_sv, SV[si]);
+            lv_obj_set_style_text_font(lbl_sv, &lv_font_montserrat_10, 0);
+            lv_obj_set_style_text_color(lbl_sv, SS[si] ? lv_color_hex(0xc4b5fd) : lv_color_hex(0x94a3b8), 0);
+            lv_obj_center(lbl_sv);
+        }
+    }
+
+    /* divider before θ section */
+    {
+        lv_obj_t *d = lv_obj_create(rp);
+        lv_obj_set_pos(d, 16, 316); lv_obj_set_size(d, 318, 1);
+        lv_obj_set_style_bg_color(d, lv_color_hex(0x334155), 0);
+        lv_obj_set_style_bg_opa(d, LV_OPA_COVER, 0);
+        bare_obj(d);
+    }
+
+    // ── θ SECTION ─────────────────────────────────────────────
+    lv_obj_t *lbl_th_hdr = lv_label_create(rp);
+    lv_label_set_text(lbl_th_hdr, "\xce\xb8  (rotation)");
+    lv_obj_set_pos(lbl_th_hdr, 16, 322);
+    lv_obj_set_style_text_font(lbl_th_hdr, &lv_font_montserrat_10, 0);
+    lv_obj_set_style_text_color(lbl_th_hdr, lv_color_hex(0x64748b), 0);
+
+    /* θ box inner(16,336,318,44) */
+    lv_obj_t *th_box = lv_obj_create(rp);
+    lv_obj_set_pos(th_box, 16, 336);
+    lv_obj_set_size(th_box, 318, 44);
+    lv_obj_set_style_bg_color(th_box, lv_color_hex(0x0f172a), 0);
+    lv_obj_set_style_bg_opa(th_box, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(th_box, 6, 0);
+    lv_obj_set_style_border_color(th_box, lv_color_hex(0x334155), 0);
+    lv_obj_set_style_border_width(th_box, 1, 0);
+    lv_obj_set_style_pad_all(th_box, 0, 0);
+    lv_obj_remove_flag(th_box, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* range labels */
+    {
+        lv_obj_t *l = lv_label_create(th_box);
+        lv_label_set_text(l, "-45\xc2\xb0");
+        lv_obj_set_pos(l, 6, 14);
+        lv_obj_set_style_text_font(l, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_color(l, lv_color_hex(0x334155), 0);
+    }
+    {
+        lv_obj_t *l = lv_label_create(th_box);
+        lv_label_set_text(l, "+45\xc2\xb0");
+        lv_obj_set_pos(l, 287, 14);
+        lv_obj_set_style_text_font(l, &lv_font_montserrat_10, 0);
+        lv_obj_set_style_text_color(l, lv_color_hex(0x334155), 0);
+    }
+
+    /* θ slider track (40,17,238,10) */
+    lv_obj_t *th_track = lv_obj_create(th_box);
+    lv_obj_set_pos(th_track, 40, 17); lv_obj_set_size(th_track, 238, 10);
+    lv_obj_set_style_bg_color(th_track, lv_color_hex(0x1e293b), 0);
+    lv_obj_set_style_bg_opa(th_track, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(th_track, 5, 0);
+    bare_obj(th_track);
+
+    /* θ fill: +25° of range -45°~+45° → (25+45)/90 * 238 = 185px ≈ 181 per SVG */
+    lv_obj_t *th_fill = lv_obj_create(th_box);
+    lv_obj_set_pos(th_fill, 40, 17); lv_obj_set_size(th_fill, 181, 10);
+    lv_obj_set_style_bg_color(th_fill, lv_color_hex(0xfbbf24), 0);
+    lv_obj_set_style_bg_opa(th_fill, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(th_fill, 5, 0);
+    bare_obj(th_fill);
+
+    /* θ knob */
+    lv_obj_t *th_knob = lv_obj_create(th_box);
+    lv_obj_set_pos(th_knob, 40 + 181 - 9, 13); lv_obj_set_size(th_knob, 18, 18);
+    lv_obj_set_style_bg_color(th_knob, lv_color_hex(0xfbbf24), 0);
+    lv_obj_set_style_bg_opa(th_knob, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(th_knob, LV_RADIUS_CIRCLE, 0);
+    bare_obj(th_knob);
+
+    /* θ value label */
+    lv_obj_t *lbl_th_val = lv_label_create(th_box);
+    lv_label_set_text(lbl_th_val, "+25\xc2\xb0");
+    lv_obj_set_pos(lbl_th_val, 130, 14);
+    lv_obj_set_style_text_font(lbl_th_val, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(lbl_th_val, lv_color_hex(0xfbbf24), 0);
+
+    // ── BOTTOM BUTTONS ─────────────────────────────────────────
+    /* Cancel content(8,410,130,24) */
+    lv_obj_t *btn_cancel = lv_btn_create(c);
+    lv_obj_set_pos(btn_cancel, 8, 410);
+    lv_obj_set_size(btn_cancel, 130, 24);
+    lv_obj_set_style_bg_color(btn_cancel, COL_SURFACE, 0);
+    lv_obj_set_style_bg_opa(btn_cancel, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(btn_cancel, 6, 0);
+    lv_obj_set_style_border_color(btn_cancel, COL_BTN_GRAY, 0);
+    lv_obj_set_style_border_width(btn_cancel, 1, 0);
+    lv_obj_set_style_pad_all(btn_cancel, 0, 0);
+    lv_obj_add_event_cb(btn_cancel, btn_back_to_settings_cb, LV_EVENT_CLICKED, NULL);
+    {
+        lv_obj_t *l = lv_label_create(btn_cancel);
+        lv_label_set_text(l, "Cancel");
+        lv_obj_set_style_text_color(l, lv_color_hex(0x94a3b8), 0);
+        lv_obj_set_style_text_font(l, &lv_font_montserrat_12, 0);
+        lv_obj_center(l);
+    }
+
+    /* Apply content(646,410,146,24) */
+    lv_obj_t *btn_apply = lv_btn_create(c);
+    lv_obj_set_pos(btn_apply, 646, 410);
+    lv_obj_set_size(btn_apply, 146, 24);
+    lv_obj_set_style_bg_color(btn_apply, lv_color_hex(0x2d1b69), 0);
+    lv_obj_set_style_bg_opa(btn_apply, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(btn_apply, 6, 0);
+    lv_obj_set_style_border_color(btn_apply, lv_color_hex(0x7c3aed), 0);
+    lv_obj_set_style_border_width(btn_apply, 1, 0);
+    lv_obj_set_style_pad_all(btn_apply, 0, 0);
+    lv_obj_add_event_cb(btn_apply, btn_back_to_settings_cb, LV_EVENT_CLICKED, NULL);
+    {
+        lv_obj_t *l = lv_label_create(btn_apply);
+        lv_label_set_text(l, LV_SYMBOL_OK "  Apply");
+        lv_obj_set_style_text_color(l, lv_color_hex(0xc4b5fd), 0);
+        lv_obj_set_style_text_font(l, &lv_font_montserrat_12, 0);
+        lv_obj_center(l);
+    }
+
+    /* one-shot timer: draw canvas after screen is ready */
+    lv_timer_create(draw_thresh_manual_preview, 50, NULL);
+}
+
+// ============================================================
 //  scr_settings_home  生成
 // ============================================================
 static void create_scr_settings_home(void)
@@ -4183,6 +4798,7 @@ int main()
 
     create_scr_meas_cond();        // 設定サブ画面は settings_home より先に作成
     create_scr_threshold();
+    create_scr_threshold_manual();
     create_scr_history();
     create_scr_correction();
     create_scr_detail();
