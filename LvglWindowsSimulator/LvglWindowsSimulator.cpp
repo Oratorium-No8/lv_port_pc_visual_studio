@@ -5035,8 +5035,8 @@ int main()
 
     create_scr_meas_cond();        // 設定サブ画面は settings_home より先に作成
     create_scr_threshold();
+    create_scr_threshold_manual();   // method画面がポインタを参照するため先に生成
     create_scr_threshold_method();
-    create_scr_threshold_manual();
     create_scr_history();
     create_scr_correction();
     create_scr_detail();
