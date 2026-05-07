@@ -4786,7 +4786,7 @@ static void create_scr_settings_home(void)
     // タイルタップ → 各設定サブ画面へ遷移
     // ※ サブ画面は create_scr_settings_home より先に生成しておく必要がある
     lv_obj_t *sub_screens[5] = {
-        scr_meas_cond, scr_threshold, scr_history, scr_correction, scr_detail
+        scr_meas_cond, scr_threshold_method, scr_history, scr_correction, scr_detail
     };
     for (int i = 0; i < 5; i++) {
         lv_obj_add_event_cb(settings_tile[i], tile_open_cb,
